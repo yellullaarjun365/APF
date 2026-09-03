@@ -1,17 +1,11 @@
 """APF V1 -- Streamlit Web UI (M4).
-Single-page dashboard matching the reference design:
-  - Left sidebar navigation
-  - Top KPI cards
-  - Production forecast panel with chart
-  - Pond overview table
-  - Right column: AI chat, water quality, risk gauge
-  - Speech input via st.audio_input + Whisper STT
+Single-page dashboard matching the reference design.
+Compatible with Streamlit 1.63.0 (no st.audio_input).
 
 Run:  streamlit run app/app.py
 """
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -45,7 +39,7 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------------
-# Custom CSS to match the reference image
+# Custom CSS
 # ------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -77,11 +71,6 @@ html, body, [class*="css"] {
     text-align: center;
     border: 1px solid #f0f4f8;
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-    transition: transform 0.15s ease;
-}
-.kpi-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
 }
 
 /* Chat bubbles */
@@ -122,45 +111,6 @@ html, body, [class*="css"] {
     font-size: 10px;
     font-weight: 600;
 }
-.badge-bad {
-    background: #ffebee;
-    color: #c62828;
-    padding: 2px 10px;
-    border-radius: 10px;
-    font-size: 10px;
-    font-weight: 600;
-}
-
-/* Forecast chart area */
-.forecast-panel {
-    background: white;
-    border-radius: 12px;
-    padding: 1.5rem;
-    border: 1px solid #f0f4f8;
-}
-
-/* Quick action pills */
-.pill {
-    background: #f0f4f8;
-    border-radius: 12px;
-    padding: 4px 12px;
-    font-size: 11px;
-    color: #4a5568;
-    border: none;
-    cursor: pointer;
-    transition: background 0.15s;
-}
-.pill:hover {
-    background: #e2e8f0;
-}
-
-/* Input styling */
-.stTextInput > div > div > input {
-    border-radius: 20px !important;
-    border: 1px solid #e2e8f0 !important;
-    padding: 8px 16px !important;
-    font-size: 13px !important;
-}
 
 /* Hide Streamlit branding */
 #MainMenu {visibility: hidden;}
@@ -172,37 +122,38 @@ header {visibility: hidden;}
 # ------------------------------------------------------------------
 # Session state
 # ------------------------------------------------------------------
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = [
-        {
-            "role": "assistant",
-            "content": "Hello! I'm your Aqua AI Assistant. You can ask me anything about your pond, production forecast, water quality, feeding, and more. How can I help you today?",
+def init_state():
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = [
+            {
+                "role": "assistant",
+                "content": "Hello! I'm your Aqua AI Assistant. You can ask me anything about your pond, production forecast, water quality, feeding, and more. How can I help you today?",
+            }
+        ]
+    if "last_prediction" not in st.session_state:
+        st.session_state.last_prediction = None
+    if "pond_params" not in st.session_state:
+        st.session_state.pond_params = {
+            "pond_area_ha": 0.5,
+            "stocking_count": 3000,
+            "initial_weight_g": 15.0,
+            "culture_days": 120,
+            "mean_temperature_c": 28.0,
+            "season": "summer",
+            "intensity": "semi-intensive",
+            "feed_protein_pct": 30,
+            "mean_do_mg_l": 7.5,
+            "min_do_mg_l": 5.0,
+            "mean_ph": 7.5,
+            "min_ph": 6.8,
+            "max_temp_c": 32.0,
+            "min_temp_c": 24.0,
         }
-    ]
 
-if "last_prediction" not in st.session_state:
-    st.session_state.last_prediction = None
-
-if "pond_params" not in st.session_state:
-    st.session_state.pond_params = {
-        "pond_area_ha": 0.5,
-        "stocking_count": 3000,
-        "initial_weight_g": 15.0,
-        "culture_days": 120,
-        "mean_temperature_c": 28.0,
-        "season": "summer",
-        "intensity": "semi-intensive",
-        "feed_protein_pct": 30,
-        "mean_do_mg_l": 7.5,
-        "min_do_mg_l": 5.0,
-        "mean_ph": 7.5,
-        "min_ph": 6.8,
-        "max_temp_c": 32.0,
-        "min_temp_c": 24.0,
-    }
+init_state()
 
 # ------------------------------------------------------------------
-# Helper: call API
+# API helpers
 # ------------------------------------------------------------------
 def _api_predict_structured(params: dict) -> dict:
     try:
@@ -230,7 +181,6 @@ def _api_predict_text(text: str) -> dict:
 # Sidebar
 # ------------------------------------------------------------------
 with st.sidebar:
-    # Logo
     col1, col2 = st.columns([1, 3])
     with col1:
         st.markdown("<div style='font-size:28px;'>🐟</div>", unsafe_allow_html=True)
@@ -240,7 +190,6 @@ with st.sidebar:
 
     st.markdown("<div style='margin-top:1.5rem;'></div>", unsafe_allow_html=True)
 
-    # Farm Management
     st.markdown("<div style='font-size:10px; font-weight:700; color:#6b7c93; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;'>Farm Management</div>", unsafe_allow_html=True)
 
     nav_items = [
@@ -254,14 +203,13 @@ with st.sidebar:
         bg = "#0d7377" if active else "transparent"
         color = "white" if active else "#4a5568"
         st.markdown(
-            f"<div style='padding:8px 10px; border-radius:8px; background:{bg}; color:{color}; font-size:13px; font-weight:{"500" if active else "400"}; margin-bottom:2px; cursor:pointer;'>"
+            f"<div style='padding:8px 10px; border-radius:8px; background:{bg}; color:{color}; font-size:13px; font-weight:{"500" if active else "400"}; margin-bottom:2px;'>"
             f"{icon} {label}</div>",
             unsafe_allow_html=True,
         )
 
     st.markdown("<div style='margin-top:1.5rem;'></div>", unsafe_allow_html=True)
 
-    # AI Tools
     st.markdown("<div style='font-size:10px; font-weight:700; color:#6b7c93; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;'>AI Tools</div>", unsafe_allow_html=True)
 
     ai_items = [
@@ -275,7 +223,7 @@ with st.sidebar:
         color = "white" if active else "#4a5568"
         badge_html = f"<span style='background:#e8f0e8; color:#0d7377; font-size:9px; padding:2px 6px; border-radius:10px; margin-left:auto;'>New</span>" if badge else ""
         st.markdown(
-            f"<div style='padding:8px 10px; border-radius:8px; background:{bg}; color:{color}; font-size:13px; font-weight:{"500" if active else "400"}; margin-bottom:2px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;'>"
+            f"<div style='padding:8px 10px; border-radius:8px; background:{bg}; color:{color}; font-size:13px; font-weight:{"500" if active else "400"}; margin-bottom:2px; display:flex; justify-content:space-between; align-items:center;'>"
             f"<span>{icon} {label}</span>{badge_html}</div>",
             unsafe_allow_html=True,
         )
@@ -316,18 +264,20 @@ with top_col2:
 st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
-# Main 3-column layout
+# Main layout
 # ------------------------------------------------------------------
 left_col, center_col, right_col = st.columns([1.2, 2.5, 1.3])
 
-# ==================== LEFT: Empty (sidebar handles nav) ====================
+# ==================== LEFT ====================
 with left_col:
     pass
 
-# ==================== CENTER: KPIs + Forecast + Table ====================
+# ==================== CENTER ====================
 with center_col:
     # --- KPI Cards ---
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+
+    pred = st.session_state.last_prediction
 
     with kpi1:
         st.markdown(
@@ -350,7 +300,6 @@ with center_col:
             unsafe_allow_html=True,
         )
     with kpi3:
-        pred = st.session_state.last_prediction
         est_val = f"{pred['point_estimate_kg']:.1f}" if pred else "—"
         est_unit = "kg" if pred else ""
         st.markdown(
@@ -376,7 +325,7 @@ with center_col:
     st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
 
     # --- Production Forecast Panel ---
-    st.markdown("<div class='forecast-panel'>", unsafe_allow_html=True)
+    st.markdown("<div style='background:white; border-radius:12px; padding:1.5rem; border:1px solid #f0f4f8;'>", unsafe_allow_html=True)
 
     fcol1, fcol2 = st.columns([1, 2])
     with fcol1:
@@ -399,10 +348,8 @@ with center_col:
             )
 
     with fcol2:
-        # Simple forecast trajectory chart
         if pred:
             days = np.arange(0, st.session_state.pond_params["culture_days"] + 1, 5)
-            # Sigmoid-ish growth curve scaled to prediction
             t_norm = days / days[-1]
             biomass = pred["point_estimate_kg"] * (3 * t_norm**2 - 2 * t_norm**3)
             upper = biomass * (pred["upper_bound_kg"] / pred["point_estimate_kg"])
@@ -435,7 +382,7 @@ with center_col:
     st.markdown(
         "<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>"
         "<div style='font-size:14px; font-weight:700; color:#1a2e35;'>Pond Overview</div>"
-        "<div style='font-size:11px; color:#0d7377; cursor:pointer;'>View all ponds →</div></div>",
+        "<div style='font-size:11px; color:#0d7377;'>View all ponds →</div></div>",
         unsafe_allow_html=True,
     )
 
@@ -444,14 +391,13 @@ with center_col:
             "Pond ID": ["🐟 Pond 1"],
             "Species": ["Nile Tilapia"],
             "Culture Day": [f"{st.session_state.pond_params['culture_days']} days"],
-            "Est. Production": [f"{pred['point_estimate_kg']:.1f} kg
-({pred['lower_bound_kg']:.0f} – {pred['upper_bound_kg']:.0f})"],
+            "Est. Production": [f"{pred['point_estimate_kg']:.1f} kg\n({pred['lower_bound_kg']:.0f} – {pred['upper_bound_kg']:.0f})"],
             "Status": ['<span class="badge-good">Good</span>'],
             "Action": ["View →"],
         }
         df_pond = pd.DataFrame(pond_data)
         st.markdown(
-            df_pond.to_html(escape=False, index=False, classes="pond-table"),
+            df_pond.to_html(escape=False, index=False),
             unsafe_allow_html=True,
         )
     else:
@@ -462,20 +408,19 @@ with center_col:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ==================== RIGHT: AI Chat + Water Quality + Risk ====================
+# ==================== RIGHT ====================
 with right_col:
     # --- AI Assistant Chat ---
     st.markdown(
-        "<div style='background:white; border-radius:12px; padding:1rem; border:1px solid #f0f4f8; display:flex; flex-direction:column;'>"
+        "<div style='background:white; border-radius:12px; padding:1rem; border:1px solid #f0f4f8;'>"
         "<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>"
         "<div style='font-size:14px; font-weight:700; color:#1a2e35;'>AI Assistant</div>"
         "<div style='display:flex; gap:8px;'>"
-        "<span style='font-size:11px; background:#f0f4f8; padding:2px 8px; border-radius:10px; color:#4a5568; cursor:pointer;'>New Chat</span>"
-        "<span style='font-size:14px; color:#6b7c93; cursor:pointer;'>✕</span></div></div>",
+        "<span style='font-size:11px; background:#f0f4f8; padding:2px 8px; border-radius:10px; color:#4a5568;'>New Chat</span>"
+        "<span style='font-size:14px; color:#6b7c93;'>✕</span></div></div>",
         unsafe_allow_html=True,
     )
 
-    # Chat messages
     chat_container = st.container()
     with chat_container:
         for msg in st.session_state.chat_history:
@@ -532,18 +477,14 @@ with right_col:
             st.session_state.chat_history.append({"role": "assistant", "content": resp})
             st.rerun()
 
-    # Text input
+    # Text input + Send
     user_text = st.text_input("", placeholder="Type your message...", key="chat_input", label_visibility="collapsed")
-
-    # Audio input (Streamlit 1.37+)
-    audio_bytes = st.audio_input("🎤 Click to Speak", key="audio_input")
 
     col_send, col_speak = st.columns([4, 1])
     with col_send:
         if st.button("➤ Send", use_container_width=True, key="btn_send"):
             if user_text.strip():
                 st.session_state.chat_history.append({"role": "user", "content": user_text.strip()})
-                # Call API
                 result = _api_predict_text(user_text.strip())
                 if result.get("status") == "incomplete":
                     missing = result.get("missing_fields", [])
@@ -615,7 +556,6 @@ with right_col:
         unsafe_allow_html=True,
     )
 
-    # SVG gauge
     st.markdown(
         """
         <svg width="140" height="80" viewBox="0 0 140 80" style="margin:0 auto; display:block;">
@@ -628,7 +568,7 @@ with right_col:
         </svg>
         <div style="font-size:16px; font-weight:700; color:#2e7d32; margin-top:8px;">Low Risk</div>
         <div style="font-size:11px; color:#6b7c93;">Overall Pond Risk</div>
-        <div style="font-size:11px; color:#0d7377; margin-top:8px; cursor:pointer;">View risk details →</div>
+        <div style="font-size:11px; color:#0d7377; margin-top:8px;">View risk details →</div>
         </div>
         """,
         unsafe_allow_html=True,
