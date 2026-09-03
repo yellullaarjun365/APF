@@ -1,10 +1,9 @@
 """APF V1 -- Streamlit Web UI (M4).
 Single-page dashboard matching the reference design.
-Compatible with Streamlit 1.63.0 (no st.audio_input).
+Compatible with Streamlit 1.63.0 and Python 3.10.
 
 Run:  streamlit run app/app.py
 """
-import json
 import os
 import sys
 from pathlib import Path
@@ -54,7 +53,6 @@ html, body, [class*="css"] {
     max-width: 1400px;
 }
 
-/* Sidebar */
 [data-testid="stSidebar"] {
     background: #ffffff !important;
     border-right: 1px solid #e8edf2;
@@ -63,7 +61,6 @@ html, body, [class*="css"] {
     padding: 1.5rem 1rem !important;
 }
 
-/* KPI cards */
 .kpi-card {
     background: white;
     border-radius: 12px;
@@ -73,7 +70,6 @@ html, body, [class*="css"] {
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
 
-/* Chat bubbles */
 .chat-bot {
     background: #f0f4f8;
     border-radius: 12px 12px 12px 4px;
@@ -94,7 +90,6 @@ html, body, [class*="css"] {
     margin-left: auto;
 }
 
-/* Status badges */
 .badge-good {
     background: #e8f5e9;
     color: #2e7d32;
@@ -112,7 +107,6 @@ html, body, [class*="css"] {
     font-weight: 600;
 }
 
-/* Hide Streamlit branding */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
@@ -202,11 +196,13 @@ with st.sidebar:
     for icon, label, active in nav_items:
         bg = "#0d7377" if active else "transparent"
         color = "white" if active else "#4a5568"
-        st.markdown(
-            f"<div style='padding:8px 10px; border-radius:8px; background:{bg}; color:{color}; font-size:13px; font-weight:{"500" if active else "400"}; margin-bottom:2px;'>"
-            f"{icon} {label}</div>",
-            unsafe_allow_html=True,
+        weight = "500" if active else "400"
+        html = (
+            "<div style='padding:8px 10px; border-radius:8px; background:" + bg +
+            "; color:" + color + "; font-size:13px; font-weight:" + weight +
+            "; margin-bottom:2px;'>" + icon + " " + label + "</div>"
         )
+        st.markdown(html, unsafe_allow_html=True)
 
     st.markdown("<div style='margin-top:1.5rem;'></div>", unsafe_allow_html=True)
 
@@ -221,12 +217,17 @@ with st.sidebar:
     for icon, label, active, badge in ai_items:
         bg = "#0d7377" if active else "transparent"
         color = "white" if active else "#4a5568"
-        badge_html = f"<span style='background:#e8f0e8; color:#0d7377; font-size:9px; padding:2px 6px; border-radius:10px; margin-left:auto;'>New</span>" if badge else ""
-        st.markdown(
-            f"<div style='padding:8px 10px; border-radius:8px; background:{bg}; color:{color}; font-size:13px; font-weight:{"500" if active else "400"}; margin-bottom:2px; display:flex; justify-content:space-between; align-items:center;'>"
-            f"<span>{icon} {label}</span>{badge_html}</div>",
-            unsafe_allow_html=True,
+        weight = "500" if active else "400"
+        badge_html = ""
+        if badge:
+            badge_html = "<span style='background:#e8f0e8; color:#0d7377; font-size:9px; padding:2px 6px; border-radius:10px; margin-left:auto;'>New</span>"
+        html = (
+            "<div style='padding:8px 10px; border-radius:8px; background:" + bg +
+            "; color:" + color + "; font-size:13px; font-weight:" + weight +
+            "; margin-bottom:2px; display:flex; justify-content:space-between; align-items:center;'>"
+            "<span>" + icon + " " + label + "</span>" + badge_html + "</div>"
         )
+        st.markdown(html, unsafe_allow_html=True)
 
     st.markdown("<div style='margin-top:auto; padding-top:2rem;'></div>", unsafe_allow_html=True)
     st.markdown(
@@ -300,15 +301,16 @@ with center_col:
             unsafe_allow_html=True,
         )
     with kpi3:
-        est_val = f"{pred['point_estimate_kg']:.1f}" if pred else "—"
+        est_val = "{:.1f}".format(pred["point_estimate_kg"]) if pred else "—"
         est_unit = "kg" if pred else ""
         st.markdown(
-            f"<div class='kpi-card'>"
-            f"<div style='font-size:24px; margin-bottom:4px;'>⚖️</div>"
-            f"<div style='font-size:11px; color:#6b7c93;'>Est. Total Production</div>"
-            f"<div style='font-size:22px; font-weight:700; color:#1a2e35;'>{est_val} <span style='font-size:12px; font-weight:400; color:#6b7c93;'>{est_unit}</span></div>"
-            f"<div style='font-size:10px; color:#6b7c93;'>All active ponds</div>"
-            f"</div>",
+            "<div class='kpi-card'>"
+            "<div style='font-size:24px; margin-bottom:4px;'>⚖️</div>"
+            "<div style='font-size:11px; color:#6b7c93;'>Est. Total Production</div>"
+            "<div style='font-size:22px; font-weight:700; color:#1a2e35;'>" + est_val +
+            " <span style='font-size:12px; font-weight:400; color:#6b7c93;'>" + est_unit + "</span></div>"
+            "<div style='font-size:10px; color:#6b7c93;'>All active ponds</div>"
+            "</div>",
             unsafe_allow_html=True,
         )
     with kpi4:
@@ -330,14 +332,18 @@ with center_col:
     fcol1, fcol2 = st.columns([1, 2])
     with fcol1:
         if pred:
+            lower = "{:.0f}".format(pred["lower_bound_kg"])
+            upper = "{:.0f}".format(pred["upper_bound_kg"])
             st.markdown(
-                f"<div style='font-size:32px; font-weight:700; color:#0d7377;'>{pred['point_estimate_kg']:.1f} <span style='font-size:14px; font-weight:400; color:#6b7c93;'>kg</span></div>"
-                f"<div style='font-size:11px; color:#6b7c93; margin-bottom:8px;'>Total Estimated Production</div>"
-                f"<div style='font-size:13px; color:#1a2e35; font-weight:600;'>{pred['lower_bound_kg']:.0f} – {pred['upper_bound_kg']:.0f} kg</div>"
-                f"<div style='font-size:10px; color:#6b7c93; margin-bottom:8px;'>Prediction Range</div>"
-                f"<div style='display:flex; align-items:center; gap:4px;'>"
-                f"<span style='font-size:12px;'>⚡</span>"
-                f"<span style='font-size:11px; color:#c9a227; font-weight:600;'>Medium Confidence</span></div>",
+                "<div style='font-size:32px; font-weight:700; color:#0d7377;'>" +
+                "{:.1f}".format(pred["point_estimate_kg"]) +
+                " <span style='font-size:14px; font-weight:400; color:#6b7c93;'>kg</span></div>"
+                "<div style='font-size:11px; color:#6b7c93; margin-bottom:8px;'>Total Estimated Production</div>"
+                "<div style='font-size:13px; color:#1a2e35; font-weight:600;'>" + lower + " – " + upper + " kg</div>"
+                "<div style='font-size:10px; color:#6b7c93; margin-bottom:8px;'>Prediction Range</div>"
+                "<div style='display:flex; align-items:center; gap:4px;'>"
+                "<span style='font-size:12px;'>⚡</span>"
+                "<span style='font-size:11px; color:#c9a227; font-weight:600;'>Medium Confidence</span></div>",
                 unsafe_allow_html=True,
             )
         else:
@@ -387,11 +393,15 @@ with center_col:
     )
 
     if pred:
+        est = "{:.1f}".format(pred["point_estimate_kg"])
+        low = "{:.0f}".format(pred["lower_bound_kg"])
+        up = "{:.0f}".format(pred["upper_bound_kg"])
+        days_str = str(st.session_state.pond_params["culture_days"]) + " days"
         pond_data = {
             "Pond ID": ["🐟 Pond 1"],
             "Species": ["Nile Tilapia"],
-            "Culture Day": [f"{st.session_state.pond_params['culture_days']} days"],
-            "Est. Production": [f"{pred['point_estimate_kg']:.1f} kg\n({pred['lower_bound_kg']:.0f} – {pred['upper_bound_kg']:.0f})"],
+            "Culture Day": [days_str],
+            "Est. Production": [est + " kg\n(" + low + " – " + up + ")"],
             "Status": ['<span class="badge-good">Good</span>'],
             "Action": ["View →"],
         }
@@ -426,16 +436,16 @@ with right_col:
         for msg in st.session_state.chat_history:
             if msg["role"] == "assistant":
                 st.markdown(
-                    f"<div style='display:flex; gap:8px; align-items:flex-start; margin-bottom:8px;'>"
-                    f"<div style='width:28px; height:28px; background:#e8f0e8; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0;'>🤖</div>"
-                    f"<div class='chat-bot'>{msg['content']}</div></div>",
+                    "<div style='display:flex; gap:8px; align-items:flex-start; margin-bottom:8px;'>"
+                    "<div style='width:28px; height:28px; background:#e8f0e8; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0;'>🤖</div>"
+                    "<div class='chat-bot'>" + msg["content"] + "</div></div>",
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(
-                    f"<div style='display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; flex-direction:row-reverse;'>"
-                    f"<div style='width:28px; height:28px; background:#0d7377; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; color:white;'>👤</div>"
-                    f"<div class='chat-user'>{msg['content']}</div></div>",
+                    "<div style='display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; flex-direction:row-reverse;'>"
+                    "<div style='width:28px; height:28px; background:#0d7377; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; color:white;'>👤</div>"
+                    "<div class='chat-user'>" + msg["content"] + "</div></div>",
                     unsafe_allow_html=True,
                 )
 
@@ -450,9 +460,9 @@ with right_col:
                     top = factors[0]
                     dir_text = "increases" if top["impact_kg"] > 0 else "reduces"
                     resp = (
-                        f"The biggest driver is <b>{top['feature']}</b>, which {dir_text} "
-                        f"the estimate by about {abs(top['impact_kg']):.0f} kg. "
-                        f"Water quality (DO, pH, temperature) and stocking density are the next most important factors."
+                        "The biggest driver is <b>" + top["feature"] + "</b>, which " + dir_text +
+                        " the estimate by about " + str(abs(int(top["impact_kg"]))) + " kg. "
+                        "Water quality (DO, pH, temperature) and stocking density are the next most important factors."
                     )
                 else:
                     resp = "The model weighs pond area, stocking density, culture duration, and water quality parameters to arrive at this forecast."
@@ -489,28 +499,33 @@ with right_col:
                 if result.get("status") == "incomplete":
                     missing = result.get("missing_fields", [])
                     followup = result.get("follow_up_question", "Could you provide more details?")
-                    resp = f"{followup}<br><br><span style='font-size:11px; color:#6b7c93;'>Missing: {', '.join(missing)}</span>"
+                    resp = followup + "<br><br><span style='font-size:11px; color:#6b7c93;'>Missing: " + ", ".join(missing) + "</span>"
                 elif result.get("status") == "complete":
                     pred_data = result.get("prediction", {})
                     st.session_state.last_prediction = pred_data
                     st.session_state.pond_params.update(result.get("extracted", {}))
+                    pe = pred_data.get("point_estimate_kg", 0)
+                    lb = pred_data.get("lower_bound_kg", 0)
+                    ub = pred_data.get("upper_bound_kg", 0)
                     resp = (
-                        f"Sure! Based on your inputs, here is the production forecast."
-                        f"<div style='background:white; border-radius:8px; padding:12px; margin-top:8px; border:1px solid #e2e8f0;'>"
-                        f"<div style='font-size:11px; color:#6b7c93; margin-bottom:4px;'>Estimated Production</div>"
-                        f"<div style='font-size:24px; font-weight:700; color:#1a2e35;'>{pred_data.get('point_estimate_kg', 0):.1f} <span style='font-size:12px; font-weight:400;'>kg</span></div>"
-                        f"<div style='font-size:11px; color:#6b7c93; margin:4px 0;'>Range: {pred_data.get('lower_bound_kg', 0):.0f} – {pred_data.get('upper_bound_kg', 0):.0f} kg</div>"
-                        f"<div style='font-size:11px; color:#6b7c93;'>Confidence: <span style='color:#c9a227; font-weight:600;'>Medium</span></div>"
-                        f"<div style='font-size:11px; color:#1a2e35; margin-top:8px; font-weight:600;'>Key Factors:</div>"
-                        f"<ul style='margin:4px 0; padding-left:16px; font-size:11px; color:#4a5568;'>"
+                        "Sure! Based on your inputs, here is the production forecast."
+                        "<div style='background:white; border-radius:8px; padding:12px; margin-top:8px; border:1px solid #e2e8f0;'>"
+                        "<div style='font-size:11px; color:#6b7c93; margin-bottom:4px;'>Estimated Production</div>"
+                        "<div style='font-size:24px; font-weight:700; color:#1a2e35;'>" + "{:.1f}".format(pe) +
+                        " <span style='font-size:12px; font-weight:400;'>kg</span></div>"
+                        "<div style='font-size:11px; color:#6b7c93; margin:4px 0;'>Range: " +
+                        "{:.0f}".format(lb) + " – " + "{:.0f}".format(ub) + " kg</div>"
+                        "<div style='font-size:11px; color:#6b7c93;'>Confidence: <span style='color:#c9a227; font-weight:600;'>Medium</span></div>"
+                        "<div style='font-size:11px; color:#1a2e35; margin-top:8px; font-weight:600;'>Key Factors:</div>"
+                        "<ul style='margin:4px 0; padding-left:16px; font-size:11px; color:#4a5568;'>"
                     )
                     factors = pred_data.get("top_factors", [])
                     for f in factors[:4]:
                         arrow = "↑" if f["impact_kg"] > 0 else "↓"
-                        resp += f"<li>{f['feature'].replace('_', ' ').title()}: {arrow}</li>"
+                        resp += "<li>" + f["feature"].replace("_", " ").title() + ": " + arrow + "</li>"
                     resp += "</ul></div>"
                 elif "error" in result:
-                    resp = f"Sorry, I encountered an error: {result['error']}"
+                    resp = "Sorry, I encountered an error: " + str(result["error"])
                 else:
                     resp = "I'm not sure how to process that. Try describing your pond with area, stocking count, days, temperature, DO, and pH."
                 st.session_state.chat_history.append({"role": "assistant", "content": resp})
@@ -532,19 +547,19 @@ with right_col:
 
     params = st.session_state.pond_params
     wq_items = [
-        ("🌡️", "Temperature", f"{params['mean_temperature_c']:.1f} °C", "Good"),
-        ("⚗️", "pH", f"{params['mean_ph']:.1f}", "Good"),
-        ("💨", "Dissolved Oxygen", f"{params['mean_do_mg_l']:.1f} mg/L", "Good"),
+        ("🌡️", "Temperature", "{:.1f}".format(params["mean_temperature_c"]) + " °C", "Good"),
+        ("⚗️", "pH", "{:.1f}".format(params["mean_ph"]), "Good"),
+        ("💨", "Dissolved Oxygen", "{:.1f}".format(params["mean_do_mg_l"]) + " mg/L", "Good"),
     ]
     for icon, label, value, status in wq_items:
         badge_class = "badge-good" if status == "Good" else ("badge-medium" if status == "Medium" else "badge-bad")
         st.markdown(
-            f"<div style='display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #f8fafc;'>"
-            f"<div style='display:flex; align-items:center; gap:8px;'>"
-            f"<span style='font-size:14px;'>{icon}</span><span style='font-size:12px; color:#4a5568;'>{label}</span></div>"
-            f"<div style='display:flex; align-items:center; gap:8px;'>"
-            f"<span style='font-size:12px; font-weight:600; color:#1a2e35;'>{value}</span>"
-            f"<span class='{badge_class}'>{status}</span></div></div>",
+            "<div style='display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #f8fafc;'>"
+            "<div style='display:flex; align-items:center; gap:8px;'>"
+            "<span style='font-size:14px;'>" + icon + "</span><span style='font-size:12px; color:#4a5568;'>" + label + "</span></div>"
+            "<div style='display:flex; align-items:center; gap:8px;'>"
+            "<span style='font-size:12px; font-weight:600; color:#1a2e35;'>" + value + "</span>"
+            "<span class='" + badge_class + "'>" + status + "</span></div></div>",
             unsafe_allow_html=True,
         )
 
