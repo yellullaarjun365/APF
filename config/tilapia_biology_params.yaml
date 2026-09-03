@@ -1,0 +1,125 @@
+# Nile tilapia (Oreochromis niloticus) mechanistic parameters
+# Sourced from published literature for use by src/simulation/ (synthetic
+# data generator, manual §4.2). Do not hand-edit numbers without updating
+# the source citation below them. Full narrative notes + caveats in
+# docs/research/tilapia_parameters_notes.md.
+#
+# Compiled: 2026-09-03
+
+growth:
+  # Specific growth rate (SGR) response to water temperature.
+  optimal_temp_c:
+    low: 27
+    high: 30
+    note: >
+      Multiple independent sources converge on 27-30C as the core optimum,
+      with a broader acceptable band of 25-32C. One controlled trial found
+      28C combined with a 25% protein diet gave the best growth outcome.
+    sources:
+      - "El-Sherif & El-Feky 2009; Pandit & Nakamura 1970; El-Sayed & Kawanna 2008 (via ScienceDirect thermal-adaptation review, 2022)"
+      - "Hamed et al. 2024, BMC Vet Res 20:349 (temperature x protein trial, 26/28/30C)"
+  acceptable_temp_range_c:
+    low: 25
+    high: 32
+    note: >
+      Below ~21-22C growth is explicitly reported as too slow for the
+      species. Above 32C is associated with masculinizing sex-reversal
+      effects in juveniles, a non-growth confound worth excluding from
+      the training-data temperature range or flagging separately.
+    sources:
+      - "ResearchGate growth-curve strain comparison (22/28/30C trial)"
+      - "PLOS ONE 2019, temperature preference & sex reversal in juveniles"
+  temp_protein_interaction_study:
+    note: >
+      Best available source for fitting an actual SGR-vs-temperature curve
+      (not just an optimum band): factorial design across temperature
+      20-34C and dietary protein 25-50%, measuring SGR, feed efficiency,
+      and IGF-I directly. Recommend fetching full text before finalizing
+      the generator's growth function.
+    source: "ScienceDirect, Aquaculture (2012), 'Growth and IGF-I response of juvenile Nile tilapia to changes in water temperature and dietary protein level'"
+
+feed_conversion_ratio:
+  overall_commercial_feed:
+    low: 1.1
+    high: 2.5
+    typical_average: 1.8
+    note: "Pelleted feed FCR 1.5-2.5:1; extruded feed FCR 1.1-2.5:1."
+    source: "El-Sayed 2013 (via ResearchGate figure summary)"
+  semi_intensive_pond:
+    low: 1.70
+    high: 1.90
+    note: "Varies by feed type (sinking vs floating), fertilized ponds."
+    source: "Bangladesh stocking-density/feed-type trial (academia.edu, sinking-feed FCR study)"
+  intensive_tank:
+    low: 2.23
+    high: 2.86
+    note: >
+      Worse (higher) FCR than semi-intensive pond in this dataset —
+      plausibly a density/water-quality confound rather than a general
+      intensive-vs-semi-intensive rule; treat as system-specific, not
+      universal.
+    source: "Same Bangladesh stocking-density trial, intensive-system arm"
+  cage_stocking_density_effect:
+    note: >
+      In a cage-cum-pond system, FCR improved (went lower) as stocking
+      density increased from 20 to 50 fish/m3 -- opposite direction from
+      the tank-density result above. FCR-vs-density relationship appears
+      system-type dependent, not a single universal curve.
+    source: "ScienceDirect 2001, caged Nile tilapia biomass/aeration study"
+  general_drivers:
+    note: >
+      Increasing crude protein, dissolved oxygen, and pH all significantly
+      decrease FCR and increase thermal growth coefficient (TGC).
+      Increasing stocking weight improves both FCR and survival.
+    source: "Mengistu et al. 2020, Reviews in Aquaculture, systematic review of tilapia yield gap"
+
+water_quality_safe_ranges:
+  dissolved_oxygen_mg_l:
+    minimum_safe: 5
+    note: "General safe-operating floor cited across multiple sources."
+  ph:
+    low: 6.4
+    high: 9.0
+    note: "Range for fish survival; nitrifying bacteria prefer 7.0-8.0."
+  temperature_c:
+    low: 25
+    high: 30
+    note: "General safe/optimal operating band (see growth section for finer detail)."
+  ammonia_mg_l:
+    maximum_safe: 0.05
+    note: "Optimum ceiling; absolute max limit for aquatic organisms generally cited at 0.1 mg/L."
+  source: "Performance of Nile Tilapia Fingerlings I: Effect of pH (ResearchGate, 2009)"
+
+mortality_thresholds:
+  dissolved_oxygen:
+    feed_intake_growth_decline_below_mg_l: 3
+    critical_respiration_threshold_mg_l: 0.8
+    note_respiration_threshold: "At 26C (Duy et al. 2008)."
+    sustained_mortality_risk_below_mg_l: 2
+    sustained_mortality_duration_days: "2-3+ consecutive days"
+    short_term_survivable_below_mg_l: 1
+    note_survivable: "Fish can air-gulp at surface briefly; this is a duration-dependent threshold, not a hard cutoff."
+    dose_response_bands_tested:
+      low: "1.0-1.5 mg/L"
+      medium: "2.5-3.0 mg/L"
+      normal: "6.0-6.5 mg/L"
+      note: "Direct factorial test against growth and innate immunity outcomes -- good source for exact response curve."
+    sources:
+      - "Springer 2015, water de-stratification/DO/ammonia in Thailand ponds (Duy et al. 2008; Chervinski 1982 cited within)"
+      - "Journal of Applied Aquaculture 2014 / ResearchGate 2026, DO level x stocking density factorial trial"
+  ph:
+    mortality_by_level_percent:
+      ph_3: {juvenile: 100, adult: 100}
+      ph_4: {juvenile: 44, adult: 34}
+      ph_5: {juvenile: 22, adult: 18}
+      ph_6: {juvenile: 12, adult: 14}
+    note: >
+      Life-stage-split mortality curve -- juveniles more sensitive at
+      pH 4-5, adults slightly more sensitive at pH 6. Directly usable for
+      a survival-penalty function keyed on pH deviation and life stage.
+    source: "Journal of Basic and Applied Zoology, 2018 (Springer), tolerance of Nile tilapia life stages to low pH"
+
+open_gaps:
+  - "No single unified temperature-dependent SGR equation (Q10 / Arrhenius-style) pulled yet -- requires fetching full text of the Brazil growth-curve paper (Scielo, exponential/Gompertz models fitted at 22/28/30C) or the ScienceDirect temp x protein IGF-I paper for actual regression coefficients."
+  - "FCR-vs-stocking-density direction disagrees between the tank study and the cage study above -- worth resolving before hard-coding a density-FCR relationship into the generator."
+  - "No literature-sourced high-temperature mortality threshold gathered yet (only the low-DO and low-pH thresholds above) -- heat-stress mortality still needs a source."
