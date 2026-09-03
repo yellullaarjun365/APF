@@ -1,0 +1,14 @@
+﻿fastapi
+uvicorn[standard]
+streamlit
+pandas
+numpy
+scikit-learn
+xgboost
+lightgbm
+shap
+openai-whisper
+gTTS
+anthropic
+python-dotenv
+pydantic
