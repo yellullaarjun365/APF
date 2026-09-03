@@ -8,15 +8,18 @@ xgboost
 lightgbm
 fastapi
 uvicorn
-uvicorn[standard]
 streamlit
 requests
+
+# Auth & database (new for per-user features)
 authlib
 httpx
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
 sqlalchemy
-python-dotenv
-fastapi
-uvicorn[standard]
+alembic
+
+# Speech (new for audio upload + transcription)
+openai-whisper
+faster-whisper
