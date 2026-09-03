@@ -2,7 +2,7 @@
   "dataset_version": "v1.0.0-mechanistic",
   "n_samples": 5000,
   "seed": 42,
-  "generated_at": "2026-09-03T13:09:16.225873",
+  "generated_at": "2026-09-03T13:35:21.248790",
   "marginal_validation": {
     "yield_kg_per_ha_in_range": "True",
     "mean_temp_in_range": "True",
