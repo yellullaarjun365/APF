@@ -1,4 +1,196 @@
-"""APF V1+ — FastAPI backend with auth, chat, upload, graceful model loading."""
+import shutil
+from pathlib import Path
+from datetime import datetime
+
+REPO = Path("C:/Users/yellu/OneDrive/Desktop/files/projects/Mini_project/APF")
+BACKUP_DIR = REPO / "backups" / datetime.now().strftime("%Y%m%d_%H%M%S")
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+def backup(path: Path):
+    if path.exists():
+        shutil.copy2(path, BACKUP_DIR / path.name)
+        print(f"  backed up {path.name}")
+
+def write(path: Path, content: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    print(f"  wrote {path}")
+
+# ---------- BACKUP ----------
+print("Backing up existing files...")
+backup(REPO / "app" / "app.py")
+backup(REPO / "src" / "api" / "main.py")
+backup(REPO / "requirements.txt")
+
+# ---------- REQUIREMENTS ----------
+write(REPO / "requirements.txt", """numpy
+pandas
+pyarrow
+scipy
+PyYAML
+scikit-learn
+xgboost
+lightgbm
+fastapi
+uvicorn
+streamlit
+requests
+authlib
+httpx
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+sqlalchemy
+python-dotenv
+""")
+
+# ---------- DB.PY ----------
+write(REPO / "src" / "api" / "db.py", '''"""APF V1+ — SQLite database for per-user chat history and uploads."""
+import os
+from datetime import datetime
+from pathlib import Path
+
+from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
+
+DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "apf.db"
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    google_id = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True)
+    name = Column(String)
+    picture = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    role = Column(String)
+    content = Column(Text)
+    prediction_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Upload(Base):
+    __tablename__ = "uploads"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    filename = Column(String)
+    file_path = Column(String)
+    file_type = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def get_or_create_user(db: Session, google_id: str, email: str, name: str, picture: str = "") -> User:
+    user = db.query(User).filter(User.google_id == google_id).first()
+    if user:
+        user.name = name
+        user.picture = picture
+        db.commit()
+        db.refresh(user)
+        return user
+    user = User(google_id=google_id, email=email, name=name, picture=picture)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+def save_message(db: Session, user_id: int, role: str, content: str, prediction_json: str = None):
+    msg = ChatMessage(user_id=user_id, role=role, content=content, prediction_json=prediction_json)
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return msg
+
+def get_chat_history(db: Session, user_id: int, limit: int = 200):
+    return db.query(ChatMessage).filter(ChatMessage.user_id == user_id).order_by(ChatMessage.created_at.asc()).limit(limit).all()
+
+def save_upload(db: Session, user_id: int, filename: str, file_path: str, file_type: str):
+    up = Upload(user_id=user_id, filename=filename, file_path=file_path, file_type=file_type)
+    db.add(up)
+    db.commit()
+    db.refresh(up)
+    return up
+''')
+
+# ---------- AUTH.PY ----------
+write(REPO / "src" / "api" / "auth.py", '''"""APF V1+ — Google OAuth 2.0 + JWT."""
+import os
+from datetime import datetime, timedelta
+
+from fastapi import HTTPException, Depends, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import jwt, JWTError
+from passlib.context import CryptContext
+from authlib.integrations.starlette_client import OAuth
+from starlette.config import Config
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "change-me-in-production-32-chars-min")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_HOURS = 24
+FRONTEND_URL = os.environ.get("APF_FRONTEND_URL", "http://localhost:8501")
+
+config = Config(environ={"GOOGLE_CLIENT_ID": GOOGLE_CLIENT_ID, "GOOGLE_CLIENT_SECRET": GOOGLE_CLIENT_SECRET})
+oauth = OAuth(config)
+oauth.register(
+    name="google",
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
+
+security = HTTPBearer(auto_error=False)
+
+def create_access_token(data: dict) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+def decode_token(token: str) -> dict:
+    try:
+        return jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        return {}
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = decode_token(credentials.credentials)
+    if not payload or "sub" not in payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return payload
+
+def get_current_user_optional(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if not credentials:
+        return None
+    payload = decode_token(credentials.credentials)
+    if not payload or "sub" not in payload:
+        return None
+    return payload
+''')
+
+# ---------- MAIN.PY ----------
+# Note: this is a condensed version. For the full file, see the download link below.
+write(REPO / "src" / "api" / "main.py", '''"""APF V1+ — FastAPI backend with auth, chat, upload, graceful model loading."""
 import json, pickle, shutil, sys, os
 from pathlib import Path
 from typing import Optional
@@ -232,3 +424,22 @@ def serve_upload(user_id: int, filename: str, user: dict = Depends(get_current_u
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+''')
+
+# ---------- .ENV.EXAMPLE ----------
+write(REPO / ".env.example", '''# APF Environment Configuration
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+JWT_SECRET_KEY=change-this-to-a-random-string-at-least-32-characters-long
+APF_API_URL=http://localhost:8000
+APF_FRONTEND_URL=http://localhost:8501
+''')
+
+print(f"\\nAll files applied. Backups saved to: {BACKUP_DIR}")
+print("Next steps:")
+print("  1. pip install -r requirements.txt")
+print("  2. Copy .env.example to .env and fill in Google OAuth credentials")
+print("  3. python scripts/generate_synthetic_data.py --n_samples 5000")
+print("  4. python src/models/train_baseline.py")
+print("  5. uvicorn src.api.main:app --reload --port 8000")
+print("  6. streamlit run app/app.py")

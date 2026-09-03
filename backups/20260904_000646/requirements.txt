@@ -10,10 +10,16 @@ fastapi
 uvicorn
 streamlit
 requests
+
+# Auth & database (new for per-user features)
 authlib
 httpx
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
 sqlalchemy
-python-dotenv
+alembic
+
+# Speech (new for audio upload + transcription)
+openai-whisper
+faster-whisper

@@ -1,0 +1,582 @@
+"""APF V1 -- Streamlit Web UI (Chat-Centric).
+Chat-first interface matching the AquaPredict AI design.
+
+Run: streamlit run app/app.py
+"""
+import os
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import requests
+import streamlit as st
+
+APP_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from features.build_features import build_features
+
+API_BASE = os.environ.get("APF_API_URL", "http://localhost:8000")
+
+st.set_page_config(
+    page_title="AquaPredict AI – Smarter Aquaculture",
+    page_icon="🐟",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ------------------------------------------------------------------
+# Custom CSS
+# ------------------------------------------------------------------
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    [data-testid="stSidebar"] { background-color: #ffffff !important; border-right: 1px solid #e2e8f0; }
+    [data-testid="stSidebar"] > div:first-child { padding-top: 1rem; }
+    .nav-active { background-color: #0f766e; color: white !important; border-radius: 8px; padding: 10px 14px; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .nav-item { color: #64748b; padding: 10px 14px; border-radius: 8px; font-size: 14px; display: flex; align-items: center; gap: 10px; margin-bottom: 4px; cursor: pointer; }
+    .nav-item:hover { background-color: #f1f5f9; color: #334155; }
+    .chat-bot { background-color: #f0fdfa; border-radius: 16px; padding: 16px 20px; margin-bottom: 16px; max-width: 85%; }
+    .chat-user { background-color: #f1f5f9; border-radius: 16px; padding: 16px 20px; margin-bottom: 16px; margin-left: auto; max-width: 85%; }
+    .chat-time { font-size: 11px; color: #94a3b8; margin-top: 8px; }
+    .pill-btn { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 8px 16px; font-size: 13px; color: #475569; cursor: pointer; margin-right: 8px; margin-bottom: 8px; display: inline-block; }
+    .pill-btn:hover { background-color: #f0fdfa; border-color: #0d9488; color: #0f766e; }
+    .badge-good { background-color: #dcfce7; color: #166534; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-medium { background-color: #fef3c7; color: #92400e; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-bad { background-color: #fee2e2; color: #991b1b; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .upload-zone { border: 2px dashed #cbd5e1; border-radius: 12px; padding: 40px 20px; text-align: center; background-color: #f8fafc; color: #64748b; font-size: 14px; }
+    .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .info-card h4 { margin: 0 0 16px 0; font-size: 15px; font-weight: 600; color: #1e293b; }
+    .wq-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+    .wq-row:last-child { border-bottom: none; }
+    .quick-action { background-color: #f0fdfa; border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; color: #0f766e; font-size: 14px; font-weight: 500; cursor: pointer; }
+    .quick-action:hover { background-color: #ccfbf1; }
+    .pond-selector { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; display: flex; align-items: center; gap: 10px; font-size: 14px; }
+    .section-label { font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin: 24px 0 8px 0; }
+    .loading-dots { display: inline-flex; gap: 4px; }
+    .loading-dots span { width: 6px; height: 6px; background-color: #0d9488; border-radius: 50%; animation: bounce 1.4s infinite ease-in-out both; }
+    .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+    .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+    @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+</style>
+""", unsafe_allow_html=True)
+
+# ------------------------------------------------------------------
+# Session state
+# ------------------------------------------------------------------
+def init_state():
+    if "page" not in st.session_state:
+        st.session_state.page = "Chat Assistant"
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = [
+            {
+                "role": "assistant",
+                "content": "Hello! I'm your AquaPredict AI assistant.\n\nYou can ask about your pond, get production forecasts, or upload data/images for analysis.",
+                "time": "10:30 AM"
+            }
+        ]
+    if "last_prediction" not in st.session_state:
+        st.session_state.last_prediction = None
+    if "pond_params" not in st.session_state:
+        st.session_state.pond_params = {
+            "pond_area_ha": 0.5,
+            "stocking_count": 3000,
+            "initial_weight_g": 15.0,
+            "culture_days": 120,
+            "mean_temperature_c": 28.0,
+            "season": "summer",
+            "intensity": "semi-intensive",
+            "feed_protein_pct": 30,
+            "mean_do_mg_l": 7.5,
+            "min_do_mg_l": 5.0,
+            "mean_ph": 7.5,
+            "min_ph": 6.8,
+            "max_temp_c": 32.0,
+            "min_temp_c": 24.0,
+        }
+    if "analyzing" not in st.session_state:
+        st.session_state.analyzing = False
+
+init_state()
+
+# ------------------------------------------------------------------
+# API helpers
+# ------------------------------------------------------------------
+def _api_predict_structured(params: dict) -> dict:
+    try:
+        r = requests.post(f"{API_BASE}/predict", json=params, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+def _api_predict_text(text: str) -> dict:
+    try:
+        r = requests.post(
+            f"{API_BASE}/predict/extract",
+            params={"farmer_text": text},
+            timeout=20,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+# ------------------------------------------------------------------
+# Sidebar navigation
+# ------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:12px;padding:8px 0 20px 0;">
+        <div style="width:36px;height:36px;background:linear-gradient(135deg,#0d9488,#0f766e);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-size:18px;">🐟</div>
+        <div>
+            <div style="font-size:16px;font-weight:700;color:#0f172a;">AquaPredict AI</div>
+            <div style="font-size:12px;color:#64748b;">Smarter Aquaculture</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="section-label">Main</div>', unsafe_allow_html=True)
+
+    nav_items = [
+        ("💬", "Chat Assistant", "Chat Assistant"),
+        ("🏠", "Dashboard", "Dashboard"),
+        ("💧", "Ponds", "Ponds"),
+        ("📏", "Measurements", "Measurements"),
+        ("📊", "Forecasts", "Production Forecast"),
+        ("🍽️", "Feed Management", "Feed Management"),
+        ("📋", "Reports", "Reports"),
+        ("🔔", "Alerts", "Alerts"),
+    ]
+
+    for icon, label, page_name in nav_items:
+        active = st.session_state.page == page_name
+        if active:
+            st.markdown(f'<div class="nav-active">{icon} {label}</div>', unsafe_allow_html=True)
+        else:
+            if st.button(f"{icon} {label}", key=f"nav_{page_name}", use_container_width=True):
+                st.session_state.page = page_name
+                st.rerun()
+
+    st.markdown('<div class="section-label">Settings</div>', unsafe_allow_html=True)
+
+    if st.button("⚙️ Settings", key="nav_settings", use_container_width=True):
+        st.session_state.page = "Settings"
+        st.rerun()
+    if st.button("❓ Help & Support", key="nav_help", use_container_width=True):
+        st.session_state.page = "Help"
+        st.rerun()
+
+    st.markdown("""
+    <div style="margin-top:40px;">
+        <div style="display:flex;align-items:center;gap:10px;padding:12px;background:#f8fafc;border-radius:10px;">
+            <div style="width:32px;height:32px;background:#0f766e;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-size:14px;font-weight:600;">F</div>
+            <div>
+                <div style="font-size:13px;font-weight:600;color:#1e293b;">Farmer</div>
+                <div style="font-size:11px;color:#64748b;">Basic Plan</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ------------------------------------------------------------------
+# Top bar
+# ------------------------------------------------------------------
+top_col1, top_col2 = st.columns([3, 1])
+with top_col1:
+    st.markdown("""
+    <div style="padding:8px 0 4px 0;">
+        <div style="font-size:22px;font-weight:700;color:#1e293b;">Good morning, Farmer 👋</div>
+        <div style="font-size:14px;color:#64748b;margin-top:4px;">Ask anything about your pond or get a production forecast.</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with top_col2:
+    params = st.session_state.pond_params
+    days_str = f"{params['culture_days']} days"
+    st.markdown(f"""
+    <div style="display:flex;justify-content:flex-end;padding-top:8px;">
+        <div class="pond-selector">
+            <span style="font-size:18px;">🧪</span>
+            <div>
+                <div style="font-weight:600;color:#1e293b;">Pond 1</div>
+                <div style="font-size:12px;color:#64748b;">Nile Tilapia • {days_str}</div>
+            </div>
+            <span style="margin-left:8px;color:#94a3b8;">▼</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("<hr style='margin:12px 0 20px 0;border:none;border-top:1px solid #e2e8f0;'>", unsafe_allow_html=True)
+
+# ------------------------------------------------------------------
+# PAGE: CHAT ASSISTANT (default / main)
+# ------------------------------------------------------------------
+def render_chat_assistant():
+    center_col, right_col = st.columns([2.2, 1])
+
+    with center_col:
+        # Chat messages
+        for msg in st.session_state.chat_history:
+            if msg["role"] == "assistant":
+                st.markdown(f"""
+                <div style="display:flex;gap:12px;margin-bottom:16px;">
+                    <div style="width:36px;height:36px;background:linear-gradient(135deg,#0d9488,#0f766e);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-size:16px;flex-shrink:0;">🐟</div>
+                    <div class="chat-bot">
+                        <div style="font-size:14px;color:#334155;line-height:1.6;white-space:pre-wrap;">{msg["content"]}</div>
+                        <div class="chat-time">{msg.get("time", "")}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="display:flex;gap:12px;margin-bottom:16px;justify-content:flex-end;">
+                    <div class="chat-user">
+                        <div style="font-size:14px;color:#334155;line-height:1.6;white-space:pre-wrap;">{msg["content"]}</div>
+                        <div class="chat-time" style="text-align:right;">{msg.get("time", "")}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # Loading indicator
+        if st.session_state.analyzing:
+            st.markdown("""
+            <div style="display:flex;gap:12px;margin-bottom:16px;">
+                <div style="width:36px;height:36px;background:linear-gradient(135deg,#0d9488,#0f766e);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-size:16px;flex-shrink:0;">🐟</div>
+                <div class="chat-bot">
+                    <div style="display:flex;align-items:center;gap:10px;font-size:14px;color:#64748b;">
+                        Analyzing your data...
+                        <div class="loading-dots"><span></span><span></span><span></span></div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Quick action pills
+        st.markdown("<div style='margin:20px 0 16px 48px;'>", unsafe_allow_html=True)
+        pills = ["Forecast my production", "Water quality is low?", "Feeding recommendation", "Growth status"]
+        pill_cols = st.columns(len(pills))
+        for i, pill in enumerate(pills):
+            with pill_cols[i]:
+                if st.button(pill, key=f"pill_{i}", use_container_width=True):
+                    st.session_state.chat_history.append({
+                        "role": "user",
+                        "content": pill,
+                        "time": "10:32 AM"
+                    })
+                    params = st.session_state.pond_params
+                    if "Forecast" in pill:
+                        if st.session_state.last_prediction:
+                            pred = st.session_state.last_prediction
+                            pe = pred.get("point_estimate_kg", 0)
+                            lb = pred.get("lower_bound_kg", 0)
+                            ub = pred.get("upper_bound_kg", 0)
+                            resp = f"Based on your latest data, here is the production forecast.\n\n**Estimated Production**\n\n{pe:.1f} kg\n\nRange: {lb:.0f} – {ub:.0f} kg\n\nConfidence: Medium\n\n**Key Factors:**"
+                            factors = pred.get("top_factors", [])
+                            for f in factors[:4]:
+                                arrow = "↑" if f["impact_kg"] > 0 else "↓"
+                                resp += f"\n- {f['feature'].replace('_', ' ').title()}: {arrow}"
+                        else:
+                            resp = "I don't have enough data to forecast yet. Please tell me about your pond (area, stocking count, culture days, temperature, DO, pH) and I'll generate a forecast."
+                    elif "Water quality" in pill:
+                        resp = f"Your current water quality readings look acceptable. Dissolved oxygen is at {params['mean_do_mg_l']:.1f} mg/L, pH is {params['mean_ph']:.1f}, and temperature is {params['mean_temperature_c']:.1f}°C. Keep monitoring DO closely — it should stay above 5 mg/L for optimal tilapia growth."
+                    elif "Feeding" in pill:
+                        resp = "For semi-intensive Nile tilapia culture, feed 28–32% protein pellets at 3–5% body weight daily for the first month, then reduce to 2–3% as fish grow. Adjust based on water temperature — feeding efficiency drops below 24°C and above 32°C."
+                    else:
+                        pct = min(95, 15 + params["culture_days"] * 0.7)
+                        resp = f"Your culture is at day {params['culture_days']}. At this stage, tilapia should be approaching {pct:.0f}% of final harvest weight. Continue monitoring water quality and feed conversion ratio."
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": resp,
+                        "time": "10:32 AM"
+                    })
+                    st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Input area
+        st.markdown("<div style='margin-top:8px;'>", unsafe_allow_html=True)
+        input_col1, input_col2, input_col3 = st.columns([6, 0.8, 0.8])
+        with input_col1:
+            user_text = st.text_input("", placeholder="Type your message...", key="chat_input", label_visibility="collapsed")
+        with input_col2:
+            st.markdown("""
+            <div style="width:40px;height:40px;border-radius:50%;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-top:4px;">
+                <span style="font-size:18px;">🎙️</span>
+            </div>
+            """, unsafe_allow_html=True)
+        with input_col3:
+            send_clicked = st.button("➤", key="btn_send", use_container_width=True)
+
+        if send_clicked and user_text and user_text.strip():
+            st.session_state.chat_history.append({
+                "role": "user",
+                "content": user_text.strip(),
+                "time": "10:31 AM"
+            })
+            st.session_state.analyzing = True
+            st.rerun()
+
+        # Handle analysis after rerun
+        if st.session_state.analyzing:
+            last_user_msg = None
+            for msg in reversed(st.session_state.chat_history):
+                if msg["role"] == "user":
+                    last_user_msg = msg["content"]
+                    break
+
+            if last_user_msg:
+                result = _api_predict_text(last_user_msg)
+                if result.get("status") == "incomplete":
+                    missing = result.get("missing_fields", [])
+                    followup = result.get("follow_up_question", "Could you provide more details?")
+                    resp = followup + "\n\nMissing: " + ", ".join(missing)
+                elif result.get("status") == "complete":
+                    pred_data = result.get("prediction", {})
+                    st.session_state.last_prediction = pred_data
+                    st.session_state.pond_params.update(result.get("extracted", {}))
+                    pe = pred_data.get("point_estimate_kg", 0)
+                    lb = pred_data.get("lower_bound_kg", 0)
+                    ub = pred_data.get("upper_bound_kg", 0)
+                    resp = (
+                        "Sure! Based on your inputs, here is the production forecast.\n\n"
+                        "**Estimated Production**\n\n"
+                        f"{pe:.1f} kg\n\n"
+                        f"Range: {lb:.0f} – {ub:.0f} kg\n\n"
+                        "Confidence: Medium\n\n"
+                        "**Key Factors:**"
+                    )
+                    factors = pred_data.get("top_factors", [])
+                    for f in factors[:4]:
+                        arrow = "↑" if f["impact_kg"] > 0 else "↓"
+                        resp += f"\n- {f['feature'].replace('_', ' ').title()}: {arrow}"
+                    resp += "\n\n"
+                elif "error" in result:
+                    resp = "Sorry, I encountered an error: " + str(result["error"])
+                else:
+                    resp = "I'm not sure how to process that. Try describing your pond with area, stocking count, days, temperature, DO, and pH."
+
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": resp,
+                    "time": "10:32 AM"
+                })
+
+            st.session_state.analyzing = False
+            st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # File upload zone
+        st.markdown("<div style='margin-top:20px;'>", unsafe_allow_html=True)
+        uploaded = st.file_uploader("", type=["jpg", "jpeg", "png", "pdf", "csv"], label_visibility="collapsed")
+        st.markdown("""
+        <div class="upload-zone">
+            <div style="font-size:24px;margin-bottom:8px;">☁️</div>
+            <div style="font-size:14px;color:#475569;font-weight:500;">Drag & drop images or files here</div>
+            <div style="font-size:13px;color:#64748b;margin-top:4px;">or <span style="color:#0d9488;font-weight:500;">click to upload</span></div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:12px;">Supports: JPG, PNG, PDF, CSV (Max 10MB)</div>
+        </div>
+        """, unsafe_allow_html=True)
+        if uploaded is not None:
+            st.success(f"Uploaded: {uploaded.name} ({uploaded.size} bytes)")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right_col:
+        # Pond Overview
+        st.markdown("""
+        <div class="info-card">
+            <h4>Pond Overview</h4>
+        """, unsafe_allow_html=True)
+
+        p = st.session_state.pond_params
+        overview_items = [
+            ("🐟", "Species", "Nile Tilapia"),
+            ("🧪", "Pond Area", f"{p['pond_area_ha']:.2f} hectares"),
+            ("📅", "Culture Day", f"{p['culture_days']} days"),
+            ("👥", "Stocking", f"{p['stocking_count']:,}"),
+            ("🕐", "Last Updated", "10:25 AM, Today"),
+        ]
+        for icon, label, value in overview_items:
+            st.markdown(f"""
+            <div class="wq-row">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:16px;">{icon}</span>
+                    <span style="font-size:13px;color:#64748b;">{label}</span>
+                </div>
+                <span style="font-size:13px;font-weight:600;color:#1e293b;">{value}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Water Quality
+        st.markdown("""
+        <div class="info-card">
+            <h4>Water Quality <span style="font-size:12px;color:#94a3b8;font-weight:400;">(Latest)</span></h4>
+        """, unsafe_allow_html=True)
+
+        do_status = "Good" if p["mean_do_mg_l"] >= 5 else "Medium"
+        do_badge = "badge-good" if do_status == "Good" else "badge-medium"
+
+        wq_items = [
+            ("🌡️", "Temperature", f"{p['mean_temperature_c']:.1f} °C", "Good", "badge-good"),
+            ("⚗️", "pH", f"{p['mean_ph']:.1f}", "Good", "badge-good"),
+            ("💨", "Dissolved Oxygen", f"{p['mean_do_mg_l']:.1f} mg/L", do_status, do_badge),
+            ("🧂", "Salinity", "0.5 ppt", "Good", "badge-good"),
+            ("☠️", "Ammonia (NH₃)", "0.12 mg/L", "Good", "badge-good"),
+        ]
+        for icon, label, value, status, badge_class in wq_items:
+            st.markdown(f"""
+            <div class="wq-row">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:16px;">{icon}</span>
+                    <span style="font-size:13px;color:#64748b;">{label}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:13px;font-weight:500;color:#1e293b;">{value}</span>
+                    <span class="{badge_class}">{status}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("""
+            <div style="text-align:right;margin-top:12px;">
+                <a href="#" style="font-size:12px;color:#0d9488;text-decoration:none;font-weight:500;">View all measurements →</a>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Quick Actions
+        st.markdown("""
+        <div class="info-card">
+            <h4>Quick Actions</h4>
+        """, unsafe_allow_html=True)
+
+        qa_items = [
+            ("📝", "Add Measurement"),
+            ("📊", "View Forecasts"),
+        ]
+        for icon, label in qa_items:
+            st.markdown(f"""
+            <div class="quick-action">
+                <span style="font-size:16px;">{icon}</span>
+                <span>{label}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ------------------------------------------------------------------
+# Other pages (kept from original, simplified)
+# ------------------------------------------------------------------
+def render_dashboard():
+    st.markdown("## 🏠 Dashboard")
+    st.info("Dashboard view. Switch to **Chat Assistant** for the main interface.")
+    pred = st.session_state.last_prediction
+    if pred:
+        st.metric("Point Estimate", f"{pred['point_estimate_kg']:.1f} kg")
+        st.metric("Range", f"{pred['lower_bound_kg']:.0f} – {pred['upper_bound_kg']:.0f} kg")
+    else:
+        st.warning("No forecast data yet. Use the Chat Assistant to generate a prediction.")
+
+def render_ponds():
+    st.markdown("## 💧 Ponds")
+    st.info("Pond management view coming in V2.")
+
+def render_measurements():
+    st.markdown("## 📏 Measurements")
+    st.info("Measurement logging view coming in V2.")
+
+def render_forecast():
+    st.markdown("## 📊 Production Forecast")
+    st.info("Detailed forecast view. Use the Chat Assistant for quick forecasts.")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.number_input("Pond Area (ha)", value=st.session_state.pond_params["pond_area_ha"], key="fc_area")
+        st.number_input("Stocking Count", value=st.session_state.pond_params["stocking_count"], key="fc_count")
+        st.number_input("Initial Weight (g)", value=st.session_state.pond_params["initial_weight_g"], key="fc_weight")
+    with c2:
+        st.number_input("Culture Days", value=st.session_state.pond_params["culture_days"], key="fc_days")
+        st.number_input("Mean Temp (°C)", value=st.session_state.pond_params["mean_temperature_c"], key="fc_temp")
+        st.number_input("Mean DO (mg/L)", value=st.session_state.pond_params["mean_do_mg_l"], key="fc_do")
+    with c3:
+        st.number_input("Mean pH", value=st.session_state.pond_params["mean_ph"], key="fc_ph")
+        st.selectbox("Season", ["summer", "winter", "monsoon"], index=0, key="fc_season")
+        st.selectbox("Intensity", ["extensive", "semi-intensive", "intensive"], index=1, key="fc_intensity")
+
+    if st.button("🔄 Run Forecast", use_container_width=True, key="btn_run_forecast"):
+        params = {
+            "pond_area_ha": st.session_state.fc_area,
+            "stocking_count": int(st.session_state.fc_count),
+            "initial_weight_g": st.session_state.fc_weight,
+            "culture_days": int(st.session_state.fc_days),
+            "mean_temperature_c": st.session_state.fc_temp,
+            "season": st.session_state.fc_season,
+            "intensity": st.session_state.fc_intensity,
+            "feed_protein_pct": 30,
+            "mean_do_mg_l": st.session_state.fc_do,
+            "min_do_mg_l": st.session_state.fc_do - 1.5,
+            "mean_ph": st.session_state.fc_ph,
+            "min_ph": st.session_state.fc_ph - 0.3,
+            "max_temp_c": st.session_state.fc_temp + 3,
+            "min_temp_c": st.session_state.fc_temp - 3,
+        }
+        result = _api_predict_structured(params)
+        if "error" not in result:
+            st.session_state.last_prediction = result
+            st.session_state.pond_params.update(params)
+            st.success("Forecast updated!")
+            st.rerun()
+        else:
+            st.error("Error: " + str(result["error"]))
+
+def render_feed():
+    st.markdown("## 🍽️ Feed Management")
+    st.info("Feed management view coming in V2.")
+
+def render_settings():
+    st.markdown("## ⚙️ Settings")
+    st.info("Settings panel coming in V2.")
+
+def render_help():
+    st.markdown("## ❓ Help & Support")
+    st.markdown("""
+    **AquaPredict AI** helps you forecast tilapia production and manage your farm.
+
+    **Quick commands:**
+    - "My pond is 0.5 hectares, stocked 3000 tilapia 120 days ago..."
+    - "What is my production forecast?"
+    - "How can I improve water quality?"
+
+    For support, contact: support@aquapredict.ai
+    """)
+
+# ------------------------------------------------------------------
+# Router
+# ------------------------------------------------------------------
+page = st.session_state.page
+
+if page == "Chat Assistant":
+    render_chat_assistant()
+elif page == "Dashboard":
+    render_dashboard()
+elif page == "Ponds":
+    render_ponds()
+elif page == "Measurements":
+    render_measurements()
+elif page == "Production Forecast":
+    render_forecast()
+elif page == "Feed Management":
+    render_feed()
+elif page == "Settings":
+    render_settings()
+elif page == "Help":
+    render_help()
+else:
+    render_chat_assistant()
