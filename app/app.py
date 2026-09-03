@@ -1,6 +1,5 @@
 """APF V1 -- Streamlit Web UI (M4).
-Single-page dashboard matching the reference design.
-Compatible with Streamlit 1.63.0 and Python 3.10.
+Light, warm color palette matching the reference design.
 
 Run:  streamlit run app/app.py
 """
@@ -38,7 +37,7 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------------
-# Custom CSS
+# Custom CSS — warm light palette
 # ------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -48,68 +47,114 @@ html, body, [class*="css"] {
     font-family: 'Inter', system-ui, sans-serif !important;
 }
 
+/* Light warm background */
+[data-testid="stAppViewContainer"] {
+    background: #f0f4f3 !important;
+}
+
 .block-container {
     padding: 1rem 2rem !important;
     max-width: 1400px;
 }
 
+/* Sidebar — clean white with warm border */
 [data-testid="stSidebar"] {
     background: #ffffff !important;
-    border-right: 1px solid #e8edf2;
+    border-right: 1px solid #e0e8e6;
 }
 [data-testid="stSidebar"] > div:first-child {
     padding: 1.5rem 1rem !important;
 }
 
+/* KPI cards — white with soft shadow */
 .kpi-card {
-    background: white;
-    border-radius: 12px;
+    background: #ffffff;
+    border-radius: 14px;
     padding: 1.25rem;
     text-align: center;
-    border: 1px solid #f0f4f8;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    border: 1px solid #e8eeec;
+    box-shadow: 0 2px 8px rgba(13, 138, 138, 0.06);
 }
 
+/* Chat bubbles */
 .chat-bot {
-    background: #f0f4f8;
-    border-radius: 12px 12px 12px 4px;
-    padding: 0.75rem 1rem;
-    color: #4a5568;
+    background: #f0f4f3;
+    border-radius: 14px 14px 14px 4px;
+    padding: 0.85rem 1rem;
+    color: #2d3e3c;
     font-size: 13px;
     line-height: 1.5;
     margin-bottom: 0.5rem;
+    border: 1px solid #e0e8e6;
 }
 .chat-user {
-    background: #0d7377;
-    border-radius: 12px 12px 4px 12px;
-    padding: 0.75rem 1rem;
-    color: white;
+    background: #0d8a8a;
+    border-radius: 14px 14px 4px 14px;
+    padding: 0.85rem 1rem;
+    color: #ffffff;
     font-size: 13px;
     line-height: 1.5;
     margin-bottom: 0.5rem;
     margin-left: auto;
 }
 
+/* Status badges */
 .badge-good {
-    background: #e8f5e9;
-    color: #2e7d32;
-    padding: 2px 10px;
-    border-radius: 10px;
+    background: #e6f4ea;
+    color: #1e7e34;
+    padding: 3px 12px;
+    border-radius: 12px;
     font-size: 10px;
     font-weight: 600;
 }
 .badge-medium {
-    background: #fff8e1;
-    color: #c9a227;
-    padding: 2px 10px;
-    border-radius: 10px;
+    background: #fff4e1;
+    color: #b8860b;
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 600;
+}
+.badge-bad {
+    background: #fce8e6;
+    color: #c62828;
+    padding: 3px 12px;
+    border-radius: 12px;
     font-size: 10px;
     font-weight: 600;
 }
 
+/* Panel cards */
+.panel-card {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 1.25rem;
+    border: 1px solid #e8eeec;
+    box-shadow: 0 2px 8px rgba(13, 138, 138, 0.05);
+}
+
+/* Hide Streamlit branding */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
+
+/* Button styling */
+button[kind="secondary"] {
+    background: #f0f4f3 !important;
+    border: 1px solid #d0ddd9 !important;
+    border-radius: 20px !important;
+    color: #2d3e3c !important;
+    font-size: 12px !important;
+}
+button[kind="secondary"]:hover {
+    background: #e0e8e6 !important;
+}
+
+/* Primary button */
+button[kind="primary"] {
+    background: #0d8a8a !important;
+    border-radius: 20px !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -194,9 +239,9 @@ with st.sidebar:
         ("🍽️", "Feed Management", False),
     ]
     for icon, label, active in nav_items:
-        bg = "#0d7377" if active else "transparent"
-        color = "white" if active else "#4a5568"
-        weight = "500" if active else "400"
+        bg = "#0d8a8a" if active else "transparent"
+        color = "#ffffff" if active else "#4a5568"
+        weight = "600" if active else "400"
         html = (
             "<div style='padding:8px 10px; border-radius:8px; background:" + bg +
             "; color:" + color + "; font-size:13px; font-weight:" + weight +
@@ -215,12 +260,12 @@ with st.sidebar:
         ("⚠️", "Risk Assessment", False, None),
     ]
     for icon, label, active, badge in ai_items:
-        bg = "#0d7377" if active else "transparent"
-        color = "white" if active else "#4a5568"
-        weight = "500" if active else "400"
+        bg = "#0d8a8a" if active else "transparent"
+        color = "#ffffff" if active else "#4a5568"
+        weight = "600" if active else "400"
         badge_html = ""
         if badge:
-            badge_html = "<span style='background:#e8f0e8; color:#0d7377; font-size:9px; padding:2px 6px; border-radius:10px; margin-left:auto;'>New</span>"
+            badge_html = "<span style='background:#e6f4f4; color:#0d8a8a; font-size:9px; padding:2px 8px; border-radius:10px; margin-left:auto;'>New</span>"
         html = (
             "<div style='padding:8px 10px; border-radius:8px; background:" + bg +
             "; color:" + color + "; font-size:13px; font-weight:" + weight +
@@ -231,7 +276,7 @@ with st.sidebar:
 
     st.markdown("<div style='margin-top:auto; padding-top:2rem;'></div>", unsafe_allow_html=True)
     st.markdown(
-        "<div style='display:flex; align-items:center; gap:8px; padding:10px; background:#f8fafc; border-radius:8px;'>"
+        "<div style='display:flex; align-items:center; gap:8px; padding:10px; background:#f5f9f8; border-radius:10px;'>"
         "<span style='font-size:18px;'>🎧</span>"
         "<div><div style='font-size:12px; font-weight:600; color:#1a2e35;'>Need help?</div>"
         "<div style='font-size:10px; color:#6b7c93;'>Contact Support</div></div></div>",
@@ -244,19 +289,19 @@ with st.sidebar:
 top_col1, top_col2 = st.columns([3, 1])
 with top_col1:
     st.markdown(
-        "<div style='font-size:20px; font-weight:700; color:#1a2e35;'>Good morning, Farmer! 👋</div>"
-        "<div style='font-size:13px; color:#6b7c93; margin-top:2px;'>Here's the overview of your farm today.</div>",
+        "<div style='font-size:22px; font-weight:700; color:#1a2e35;'>Good morning, Farmer! 👋</div>"
+        "<div style='font-size:13px; color:#6b7c93; margin-top:4px;'>Here is the overview of your farm today.</div>",
         unsafe_allow_html=True,
     )
 with top_col2:
     st.markdown(
         "<div style='display:flex; justify-content:flex-end; align-items:center; gap:16px;'>"
         "<div style='text-align:center;'>"
-        "<div style='font-size:20px;'>🌤️</div>"
+        "<div style='font-size:22px;'>🌤️</div>"
         "<div style='font-size:12px; font-weight:600; color:#1a2e35;'>28°C</div>"
         "<div style='font-size:10px; color:#6b7c93;'>Partly Cloudy</div></div>"
         "<div style='display:flex; align-items:center; gap:8px;'>"
-        "<div style='width:32px; height:32px; background:#e8f0e8; border-radius:50%; display:flex; align-items:center; justify-content:center;'>👤</div>"
+        "<div style='width:32px; height:32px; background:#e6f4f4; border-radius:50%; display:flex; align-items:center; justify-content:center;'>👤</div>"
         "<div><div style='font-size:12px; font-weight:600; color:#1a2e35;'>Farmer</div>"
         "<div style='font-size:10px; color:#6b7c93;'>Tilapia Farm</div></div></div></div>",
         unsafe_allow_html=True,
@@ -283,20 +328,20 @@ with center_col:
     with kpi1:
         st.markdown(
             "<div class='kpi-card'>"
-            "<div style='font-size:24px; margin-bottom:4px;'>💧</div>"
-            "<div style='font-size:11px; color:#6b7c93;'>Total Ponds</div>"
-            "<div style='font-size:22px; font-weight:700; color:#1a2e35;'>8</div>"
-            "<div style='font-size:10px; color:#0d7377;'>Active: 6</div>"
+            "<div style='font-size:28px; margin-bottom:6px;'>💧</div>"
+            "<div style='font-size:11px; color:#6b7c93; font-weight:500;'>Total Ponds</div>"
+            "<div style='font-size:24px; font-weight:700; color:#1a2e35; margin-top:4px;'>8</div>"
+            "<div style='font-size:11px; color:#0d8a8a; font-weight:500;'>Active: 6</div>"
             "</div>",
             unsafe_allow_html=True,
         )
     with kpi2:
         st.markdown(
             "<div class='kpi-card'>"
-            "<div style='font-size:24px; margin-bottom:4px;'>🌱</div>"
-            "<div style='font-size:11px; color:#6b7c93;'>Active Cultures</div>"
-            "<div style='font-size:22px; font-weight:700; color:#1a2e35;'>6</div>"
-            "<div style='font-size:10px; color:#0d7377;'>In progress</div>"
+            "<div style='font-size:28px; margin-bottom:6px;'>🌱</div>"
+            "<div style='font-size:11px; color:#6b7c93; font-weight:500;'>Active Cultures</div>"
+            "<div style='font-size:24px; font-weight:700; color:#1a2e35; margin-top:4px;'>6</div>"
+            "<div style='font-size:11px; color:#0d8a8a; font-weight:500;'>In progress</div>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -305,21 +350,21 @@ with center_col:
         est_unit = "kg" if pred else ""
         st.markdown(
             "<div class='kpi-card'>"
-            "<div style='font-size:24px; margin-bottom:4px;'>⚖️</div>"
-            "<div style='font-size:11px; color:#6b7c93;'>Est. Total Production</div>"
-            "<div style='font-size:22px; font-weight:700; color:#1a2e35;'>" + est_val +
+            "<div style='font-size:28px; margin-bottom:6px;'>⚖️</div>"
+            "<div style='font-size:11px; color:#6b7c93; font-weight:500;'>Est. Total Production</div>"
+            "<div style='font-size:24px; font-weight:700; color:#1a2e35; margin-top:4px;'>" + est_val +
             " <span style='font-size:12px; font-weight:400; color:#6b7c93;'>" + est_unit + "</span></div>"
-            "<div style='font-size:10px; color:#6b7c93;'>All active ponds</div>"
+            "<div style='font-size:11px; color:#6b7c93; font-weight:500;'>All active ponds</div>"
             "</div>",
             unsafe_allow_html=True,
         )
     with kpi4:
         st.markdown(
             "<div class='kpi-card'>"
-            "<div style='font-size:24px; margin-bottom:4px;'>📅</div>"
-            "<div style='font-size:11px; color:#6b7c93;'>Avg. Culture Day</div>"
-            "<div style='font-size:22px; font-weight:700; color:#1a2e35;'>72</div>"
-            "<div style='font-size:10px; color:#6b7c93;'>days</div>"
+            "<div style='font-size:28px; margin-bottom:6px;'>📅</div>"
+            "<div style='font-size:11px; color:#6b7c93; font-weight:500;'>Avg. Culture Day</div>"
+            "<div style='font-size:24px; font-weight:700; color:#1a2e35; margin-top:4px;'>72</div>"
+            "<div style='font-size:11px; color:#6b7c93; font-weight:500;'>days</div>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -327,7 +372,7 @@ with center_col:
     st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
 
     # --- Production Forecast Panel ---
-    st.markdown("<div style='background:white; border-radius:12px; padding:1.5rem; border:1px solid #f0f4f8;'>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-card'>", unsafe_allow_html=True)
 
     fcol1, fcol2 = st.columns([1, 2])
     with fcol1:
@@ -335,21 +380,21 @@ with center_col:
             lower = "{:.0f}".format(pred["lower_bound_kg"])
             upper = "{:.0f}".format(pred["upper_bound_kg"])
             st.markdown(
-                "<div style='font-size:32px; font-weight:700; color:#0d7377;'>" +
+                "<div style='font-size:32px; font-weight:700; color:#0d8a8a;'>" +
                 "{:.1f}".format(pred["point_estimate_kg"]) +
                 " <span style='font-size:14px; font-weight:400; color:#6b7c93;'>kg</span></div>"
-                "<div style='font-size:11px; color:#6b7c93; margin-bottom:8px;'>Total Estimated Production</div>"
-                "<div style='font-size:13px; color:#1a2e35; font-weight:600;'>" + lower + " – " + upper + " kg</div>"
-                "<div style='font-size:10px; color:#6b7c93; margin-bottom:8px;'>Prediction Range</div>"
-                "<div style='display:flex; align-items:center; gap:4px;'>"
-                "<span style='font-size:12px;'>⚡</span>"
-                "<span style='font-size:11px; color:#c9a227; font-weight:600;'>Medium Confidence</span></div>",
+                "<div style='font-size:11px; color:#6b7c93; margin-bottom:8px; font-weight:500;'>Total Estimated Production</div>"
+                "<div style='font-size:14px; color:#1a2e35; font-weight:600;'>" + lower + " – " + upper + " kg</div>"
+                "<div style='font-size:10px; color:#6b7c93; margin-bottom:8px; font-weight:500;'>Prediction Range</div>"
+                "<div style='display:flex; align-items:center; gap:6px;'>"
+                "<span style='font-size:14px;'>⚡</span>"
+                "<span style='font-size:12px; color:#c9a227; font-weight:600;'>Medium Confidence</span></div>",
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(
-                "<div style='font-size:32px; font-weight:700; color:#0d7377;'>— <span style='font-size:14px; font-weight:400; color:#6b7c93;'>kg</span></div>"
-                "<div style='font-size:11px; color:#6b7c93; margin-bottom:8px;'>Run a forecast to see results</div>",
+                "<div style='font-size:32px; font-weight:700; color:#0d8a8a;'>— <span style='font-size:14px; font-weight:400; color:#6b7c93;'>kg</span></div>"
+                "<div style='font-size:11px; color:#6b7c93; margin-bottom:8px; font-weight:500;'>Run a forecast to see results</div>",
                 unsafe_allow_html=True,
             )
 
@@ -369,12 +414,12 @@ with center_col:
             })
             st.line_chart(
                 chart_df.set_index("Day")[["Forecast", "Upper", "Lower"]],
-                color=["#0d7377", "#e6f3f3", "#e6f3f3"],
+                color=["#0d8a8a", "#d0e8e8", "#d0e8e8"],
                 use_container_width=True,
             )
         else:
             st.markdown(
-                "<div style='background:#f8fafc; border-radius:8px; padding:2rem; text-align:center; color:#6b7c93; font-size:13px;'>"
+                "<div style='background:#f5f9f8; border-radius:10px; padding:2rem; text-align:center; color:#6b7c93; font-size:13px;'>"
                 "Enter pond details in the AI Assistant panel and click <b>Forecast</b> to see the production curve."
                 "</div>",
                 unsafe_allow_html=True,
@@ -384,11 +429,11 @@ with center_col:
     st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
 
     # --- Pond Overview Table ---
-    st.markdown("<div style='background:white; border-radius:12px; padding:1.25rem; border:1px solid #f0f4f8;'>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-card'>", unsafe_allow_html=True)
     st.markdown(
         "<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>"
-        "<div style='font-size:14px; font-weight:700; color:#1a2e35;'>Pond Overview</div>"
-        "<div style='font-size:11px; color:#0d7377;'>View all ponds →</div></div>",
+        "<div style='font-size:15px; font-weight:700; color:#1a2e35;'>Pond Overview</div>"
+        "<div style='font-size:11px; color:#0d8a8a; font-weight:500; cursor:pointer;'>View all ponds →</div></div>",
         unsafe_allow_html=True,
     )
 
@@ -422,12 +467,12 @@ with center_col:
 with right_col:
     # --- AI Assistant Chat ---
     st.markdown(
-        "<div style='background:white; border-radius:12px; padding:1rem; border:1px solid #f0f4f8;'>"
+        "<div class='panel-card'>"
         "<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>"
-        "<div style='font-size:14px; font-weight:700; color:#1a2e35;'>AI Assistant</div>"
+        "<div style='font-size:15px; font-weight:700; color:#1a2e35;'>AI Assistant</div>"
         "<div style='display:flex; gap:8px;'>"
-        "<span style='font-size:11px; background:#f0f4f8; padding:2px 8px; border-radius:10px; color:#4a5568;'>New Chat</span>"
-        "<span style='font-size:14px; color:#6b7c93;'>✕</span></div></div>",
+        "<span style='font-size:11px; background:#f0f4f3; padding:3px 10px; border-radius:10px; color:#4a5568; font-weight:500; cursor:pointer;'>New Chat</span>"
+        "<span style='font-size:14px; color:#6b7c93; cursor:pointer;'>✕</span></div></div>",
         unsafe_allow_html=True,
     )
 
@@ -437,14 +482,14 @@ with right_col:
             if msg["role"] == "assistant":
                 st.markdown(
                     "<div style='display:flex; gap:8px; align-items:flex-start; margin-bottom:8px;'>"
-                    "<div style='width:28px; height:28px; background:#e8f0e8; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0;'>🤖</div>"
+                    "<div style='width:28px; height:28px; background:#e6f4f4; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0;'>🤖</div>"
                     "<div class='chat-bot'>" + msg["content"] + "</div></div>",
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(
                     "<div style='display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; flex-direction:row-reverse;'>"
-                    "<div style='width:28px; height:28px; background:#0d7377; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; color:white;'>👤</div>"
+                    "<div style='width:28px; height:28px; background:#0d8a8a; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; color:white;'>👤</div>"
                     "<div class='chat-user'>" + msg["content"] + "</div></div>",
                     unsafe_allow_html=True,
                 )
@@ -509,14 +554,14 @@ with right_col:
                     ub = pred_data.get("upper_bound_kg", 0)
                     resp = (
                         "Sure! Based on your inputs, here is the production forecast."
-                        "<div style='background:white; border-radius:8px; padding:12px; margin-top:8px; border:1px solid #e2e8f0;'>"
-                        "<div style='font-size:11px; color:#6b7c93; margin-bottom:4px;'>Estimated Production</div>"
-                        "<div style='font-size:24px; font-weight:700; color:#1a2e35;'>" + "{:.1f}".format(pe) +
+                        "<div style='background:#ffffff; border-radius:10px; padding:14px; margin-top:10px; border:1px solid #e0e8e6;'>"
+                        "<div style='font-size:11px; color:#6b7c93; margin-bottom:4px; font-weight:500;'>Estimated Production</div>"
+                        "<div style='font-size:26px; font-weight:700; color:#1a2e35;'>" + "{:.1f}".format(pe) +
                         " <span style='font-size:12px; font-weight:400;'>kg</span></div>"
-                        "<div style='font-size:11px; color:#6b7c93; margin:4px 0;'>Range: " +
+                        "<div style='font-size:12px; color:#6b7c93; margin:4px 0; font-weight:500;'>Range: " +
                         "{:.0f}".format(lb) + " – " + "{:.0f}".format(ub) + " kg</div>"
-                        "<div style='font-size:11px; color:#6b7c93;'>Confidence: <span style='color:#c9a227; font-weight:600;'>Medium</span></div>"
-                        "<div style='font-size:11px; color:#1a2e35; margin-top:8px; font-weight:600;'>Key Factors:</div>"
+                        "<div style='font-size:12px; color:#6b7c93; font-weight:500;'>Confidence: <span style='color:#c9a227; font-weight:600;'>Medium</span></div>"
+                        "<div style='font-size:12px; color:#1a2e35; margin-top:10px; font-weight:600;'>Key Factors:</div>"
                         "<ul style='margin:4px 0; padding-left:16px; font-size:11px; color:#4a5568;'>"
                     )
                     factors = pred_data.get("top_factors", [])
@@ -534,14 +579,15 @@ with right_col:
     with col_speak:
         st.markdown("<div style='text-align:center; margin-top:4px;'><span style='font-size:10px; color:#6b7c93;'>🎤 Speak</span></div>", unsafe_allow_html=True)
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
     # --- Water Quality Panel ---
     st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
     st.markdown(
-        "<div style='background:white; border-radius:12px; padding:1rem; border:1px solid #f0f4f8;'>"
+        "<div class='panel-card'>"
         "<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>"
-        "<div style='font-size:14px; font-weight:700; color:#1a2e35;'>Water Quality <span style='font-size:10px; color:#6b7c93; font-weight:400;'>(Live)</span></div>"
-        "<div style='background:#f0f4f8; border-radius:6px; padding:2px 8px; font-size:11px; color:#4a5568;'>Pond 1 ▼</div></div>"
-        "</div>",
+        "<div style='font-size:15px; font-weight:700; color:#1a2e35;'>Water Quality <span style='font-size:10px; color:#6b7c93; font-weight:400;'>(Live)</span></div>"
+        "<div style='background:#f0f4f3; border-radius:8px; padding:3px 10px; font-size:11px; color:#4a5568; font-weight:500;'>Pond 1 ▼</div></div>",
         unsafe_allow_html=True,
     )
 
@@ -554,36 +600,38 @@ with right_col:
     for icon, label, value, status in wq_items:
         badge_class = "badge-good" if status == "Good" else ("badge-medium" if status == "Medium" else "badge-bad")
         st.markdown(
-            "<div style='display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #f8fafc;'>"
-            "<div style='display:flex; align-items:center; gap:8px;'>"
-            "<span style='font-size:14px;'>" + icon + "</span><span style='font-size:12px; color:#4a5568;'>" + label + "</span></div>"
-            "<div style='display:flex; align-items:center; gap:8px;'>"
-            "<span style='font-size:12px; font-weight:600; color:#1a2e35;'>" + value + "</span>"
+            "<div style='display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #f0f4f3;'>"
+            "<div style='display:flex; align-items:center; gap:10px;'>"
+            "<span style='font-size:16px;'>" + icon + "</span><span style='font-size:13px; color:#4a5568; font-weight:500;'>" + label + "</span></div>"
+            "<div style='display:flex; align-items:center; gap:10px;'>"
+            "<span style='font-size:13px; font-weight:600; color:#1a2e35;'>" + value + "</span>"
             "<span class='" + badge_class + "'>" + status + "</span></div></div>",
             unsafe_allow_html=True,
         )
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
     # --- Risk Assessment ---
     st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
     st.markdown(
-        "<div style='background:white; border-radius:12px; padding:1rem; border:1px solid #f0f4f8; text-align:center;'>"
-        "<div style='font-size:14px; font-weight:700; color:#1a2e35; margin-bottom:12px; text-align:left;'>Risk Assessment</div>",
+        "<div class='panel-card' style='text-align:center;'>"
+        "<div style='font-size:15px; font-weight:700; color:#1a2e35; margin-bottom:14px; text-align:left;'>Risk Assessment</div>",
         unsafe_allow_html=True,
     )
 
     st.markdown(
         """
-        <svg width="140" height="80" viewBox="0 0 140 80" style="margin:0 auto; display:block;">
-          <path d="M 10 70 A 60 60 0 0 1 130 70" fill="none" stroke="#e2e8f0" stroke-width="12" stroke-linecap="round"/>
-          <path d="M 10 70 A 60 60 0 0 1 50 18" fill="none" stroke="#4caf50" stroke-width="12" stroke-linecap="round"/>
-          <path d="M 50 18 A 60 60 0 0 1 90 18" fill="none" stroke="#ffc107" stroke-width="12" stroke-linecap="round"/>
-          <path d="M 90 18 A 60 60 0 0 1 130 70" fill="none" stroke="#f44336" stroke-width="12" stroke-linecap="round"/>
-          <line x1="70" y1="70" x2="35" y2="35" stroke="#1a2e35" stroke-width="3" stroke-linecap="round"/>
-          <circle cx="70" cy="70" r="5" fill="#1a2e35"/>
+        <svg width="160" height="90" viewBox="0 0 160 90" style="margin:0 auto; display:block;">
+          <path d="M 15 78 A 65 65 0 0 1 145 78" fill="none" stroke="#e0e8e6" stroke-width="14" stroke-linecap="round"/>
+          <path d="M 15 78 A 65 65 0 0 1 58 20" fill="none" stroke="#4caf50" stroke-width="14" stroke-linecap="round"/>
+          <path d="M 58 20 A 65 65 0 0 1 102 20" fill="none" stroke="#ffc107" stroke-width="14" stroke-linecap="round"/>
+          <path d="M 102 20 A 65 65 0 0 1 145 78" fill="none" stroke="#f44336" stroke-width="14" stroke-linecap="round"/>
+          <line x1="80" y1="78" x2="40" y2="38" stroke="#1a2e35" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="80" cy="78" r="6" fill="#1a2e35"/>
         </svg>
-        <div style="font-size:16px; font-weight:700; color:#2e7d32; margin-top:8px;">Low Risk</div>
-        <div style="font-size:11px; color:#6b7c93;">Overall Pond Risk</div>
-        <div style="font-size:11px; color:#0d7377; margin-top:8px;">View risk details →</div>
+        <div style="font-size:18px; font-weight:700; color:#2e7d32; margin-top:10px;">Low Risk</div>
+        <div style="font-size:12px; color:#6b7c93; font-weight:500;">Overall Pond Risk</div>
+        <div style="font-size:12px; color:#0d8a8a; margin-top:10px; font-weight:500; cursor:pointer;">View risk details →</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -593,7 +641,7 @@ with right_col:
 # Footer
 # ------------------------------------------------------------------
 st.markdown(
-    "<div style='text-align:center; margin-top:2rem; padding-top:1rem; border-top:1px solid #f0f4f8;'>"
-    "<span style='font-size:10px; color:#6b7c93;'>All times are in your local timezone.</span></div>",
+    "<div style='text-align:center; margin-top:2rem; padding-top:1rem; border-top:1px solid #e0e8e6;'>"
+    "<span style='font-size:10px; color:#6b7c93; font-weight:500;'>All times are in your local timezone.</span></div>",
     unsafe_allow_html=True,
 )
