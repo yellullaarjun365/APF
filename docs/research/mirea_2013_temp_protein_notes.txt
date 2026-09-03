@@ -1,0 +1,5 @@
+﻿Paper: Mirea 2013 - Effects of water temperature and dietary protein on growth performance of Nile tilapia
+Source: ScienceDirect / Aquaculture
+Key finding: Optimal temp 29-31 C. SGR at 30 C / 40% protein = 2.748% per day.
+Lethal minimum: 10-11 C. Stress/disease onset: 37-38 C.
+

@@ -12,3 +12,8 @@ gTTS
 anthropic
 python-dotenv
 pydantic
+numpy
+pandas
+pyyaml
+scipy
+pyarrow
