@@ -259,7 +259,7 @@ def validate_relationships(df: pd.DataFrame) -> dict:
         "high_temp_worsens_fcr": df[df["mean_temperature_c"] > 30]["fcr_effective"].mean() > df[df["mean_temperature_c"] < 28]["fcr_effective"].mean(),
         "do_stress_reduces_survival": df[df["do_stress_days"] > 0]["survival_rate"].mean() < df[df["do_stress_days"] == 0]["survival_rate"].mean(),
         "ph_stress_reduces_survival": df[df["ph_stress_days"] > 0]["survival_rate"].mean() < df[df["ph_stress_days"] == 0]["survival_rate"].mean(),
-        "intensity_affects_fcr": df.groupby("intensity")["fcr_effective"].std() > 0.05,
+        "intensity_affects_fcr": (df.groupby("intensity")["fcr_effective"].std() > 0.05).all(),
     }
 
 def main():
