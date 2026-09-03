@@ -1,0 +1,6 @@
+{
+  "coverage": 0.9,
+  "half_width": 134.3912817382812,
+  "method": "conformal_absolute_residuals",
+  "fitted_on": "v1_train test split"
+}

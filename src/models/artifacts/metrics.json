@@ -1,0 +1,32 @@
+{
+  "model_version": "v1.0.0-baseline",
+  "dataset_version": "v1.0.2-mechanistic",
+  "target": "total_yield_kg",
+  "best_model": "xgboost",
+  "test_metrics": {
+    "xgboost": {
+      "mae": 46.428,
+      "rmse": 85.122,
+      "r2": 0.9974
+    },
+    "lightgbm": {
+      "mae": 53.461,
+      "rmse": 97.506,
+      "r2": 0.9966
+    }
+  },
+  "interval_half_width_90": 134.3912817382812,
+  "feature_importance_top10": {
+    "num__total_feed_kg": 0.40494439005851746,
+    "num__log_pond_area": 0.27934083342552185,
+    "num__pond_area_ha": 0.17440848052501678,
+    "cat__intensity_semi-intensive": 0.029034323990345,
+    "num__max_temp_c": 0.021209709346294403,
+    "cat__intensity_intensive": 0.018999626860022545,
+    "num__log_stocking_count": 0.01692201942205429,
+    "num__initial_weight_g": 0.008143141865730286,
+    "num__min_temp_c": 0.00814041681587696,
+    "num__stocking_count": 0.00759438332170248
+  },
+  "trained_at": "2026-09-03T13:48:30.535158"
+}
