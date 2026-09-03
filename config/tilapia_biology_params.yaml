@@ -5,7 +5,6 @@
 growth:
   # Temperature-dependent specific growth rate (SGR, % body weight / day)
   # Source: Mirea 2013 (Aquaculture) — full factorial 20/24/28/30 C x 30/35/40% protein
-  # Optimal band where SGR is maximal
   sgr_optimal_temp_low_c: 29          # Mirea 2013: optimal 29-31 C
   sgr_optimal_temp_high_c: 31
   sgr_optimal_value_pct_per_day: 2.748 # Mirea 2013: 30 C / 40% protein = 2.748 %/day
@@ -14,7 +13,7 @@ growth:
   # Source: Santos et al. 2013, Acta Scientiarum Animal Sciences 35(3):235-242
   gompertz:
     temp_22c:
-      A_g: 122.1    # asymptotic weight
+      A_g: 122.1
       K_per_day: 0.0882
     temp_28c:
       A_g: 981.8
@@ -32,7 +31,6 @@ growth:
 
   # Thermal performance curve — Q10-style degradation outside optimum
   # Source: Nehemia 2012 / Mirea 2013 synthesis
-  # Growth at 20-22 C is ~30 % of optimal; at 37 C growth significantly declines.
   q10_factor: 2.0
   sgr_at_20c_pct_of_optimal: 0.30
 
@@ -40,7 +38,6 @@ feed_conversion:
   # FCR ranges for extensive / semi-intensive pond culture
   # Source: FAO Fisheries Circular "Aquaculture of tilapias" (production-yield data)
   # NOTE: Direction of density effect is unresolved (tank vs cage studies disagree).
-  #       Using neutral range until reconciled.
   fcr_extensive_low: 1.2
   fcr_extensive_high: 1.6
   fcr_semi_intensive_low: 1.4
@@ -49,12 +46,21 @@ feed_conversion:
   fcr_intensive_high: 1.4
 
 mortality:
+  # Background daily mortality: handling, predation, disease baseline.
+  # Calibrated so simulated survival distribution matches the documented
+  # 70-95% range for semi-intensive Nile tilapia culture cycles
+  # (FAO tilapia culture manuals; El-Sayed 2006, Tilapia Culture).
+  daily_background_mortality_rate: 0.0004
+
   # Dissolved oxygen thresholds
   # Source: Fisheries 2022 (MDPI) — acute hypoxia mortality at 0.2 mg/L under heat stress
   #         General aquaculture consensus: < 3 mg/L is chronic stress, < 1.5 mg/L is lethal
   do_lethal_mg_l: 1.5
   do_critical_mg_l: 3.0
   do_stress_mg_l: 4.0
+  # Chronic mild hypoxia (3-4 mg/L): sublethal but cumulative
+  # Source: FAO aquaculture water-quality guidance; Boyd & Tucker 1998
+  daily_mortality_rate_do_below_stress: 0.0015
 
   # pH thresholds
   # Source: General tilapia water-quality literature
@@ -74,8 +80,11 @@ mortality:
   temp_optimal_low_c: 25.0
   temp_stress_low_c: 20.0
   temp_lethal_low_c: 11.0   # Mirea 2013: lethal minimum 10-11 C
+  # Chronic warm-side stress (30-32 C): disease pressure, elevated metabolism
+  # Source: Frontiers Vet Sci 2022 (streptococcosis outbreaks at 32 C+)
+  daily_mortality_rate_temp_above_optimal: 0.001
 
-  # Mortality penalty multipliers (per day) when outside safe range
+  # Acute mortality penalty multipliers (per day) when outside safe range
   # These are approximations; calibrate against real pilot data when available.
   daily_mortality_rate_do_below_critical: 0.005
   daily_mortality_rate_do_below_lethal: 0.05

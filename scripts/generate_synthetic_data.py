@@ -30,10 +30,14 @@ def daily_mortality_rate(temp_c: float, do_mg_l: float, ph: float) -> float:
         rate += M["daily_mortality_rate_do_below_lethal"]
     elif do_mg_l < M["do_critical_mg_l"]:
         rate += M["daily_mortality_rate_do_below_critical"]
+    elif do_mg_l < M["do_stress_mg_l"]:
+        rate += M.get("daily_mortality_rate_do_below_stress", 0.0)
     if temp_c > M["temp_lethal_high_c"]:
         rate += M["daily_mortality_rate_temp_above_lethal"]
     elif temp_c > M["temp_stress_high_c"]:
         rate += M["daily_mortality_rate_temp_above_stress"]
+    elif temp_c > M["temp_optimal_high_c"]:
+        rate += M.get("daily_mortality_rate_temp_above_optimal", 0.0)
     if temp_c < M["temp_lethal_low_c"]:
         rate += 0.05
     elif temp_c < M["temp_stress_low_c"]:
@@ -91,6 +95,7 @@ def simulate_cycle(pond_area_ha, stocking_count, initial_weight_g, culture_days,
     survival_count = stocking_count
     total_feed_kg = 0.0
     stress_days = 0
+    bg_rate = M.get("daily_background_mortality_rate", 0.0)
 
     for day in range(culture_days):
         temp = temp_arr[day]
@@ -98,7 +103,7 @@ def simulate_cycle(pond_area_ha, stocking_count, initial_weight_g, culture_days,
         ph = ph_arr[day]
 
         mort_rate = daily_mortality_rate(temp, do, ph)
-        if mort_rate > M.get("daily_background_mortality_rate", 0.0):
+        if mort_rate > bg_rate:
             stress_days += 1
         daily_deaths = int(np.random.binomial(survival_count, mort_rate))
         survival_count -= daily_deaths
@@ -150,7 +155,7 @@ def simulate_cycle(pond_area_ha, stocking_count, initial_weight_g, culture_days,
         "min_ph": round(env["ph"].min(), 2),
         "max_temp_c": round(env["temperature_c"].max(), 1),
         "min_temp_c": round(env["temperature_c"].min(), 1),
-        "dataset_version": "v1.0.1-mechanistic",
+        "dataset_version": "v1.0.2-mechanistic",
         "generated_at": datetime.utcnow().isoformat(),
     }
 
@@ -212,7 +217,7 @@ def main():
     df.to_parquet(out_path, index=False)
     df.head(1000).to_csv(out_path.with_suffix(".csv"), index=False)
     report = {
-        "dataset_version": "v1.0.1-mechanistic",
+        "dataset_version": "v1.0.2-mechanistic",
         "n_samples": len(df),
         "seed": args.seed,
         "generated_at": datetime.utcnow().isoformat(),
