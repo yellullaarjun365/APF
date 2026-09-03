@@ -1,4 +1,4 @@
-﻿\"\"\"APF V1 — Mechanistic synthetic data generator for Nile tilapia.
+﻿"""APF V1 -- Mechanistic synthetic data generator for Nile tilapia.
 
 Generates farm-level culture cycles with a biological core:
   1. Temperature-dependent growth (Gompertz + thermal degradation)
@@ -8,7 +8,7 @@ Generates farm-level culture cycles with a biological core:
 
 Usage:
     python scripts/generate_synthetic_data.py --n_samples 5000 --out data/synthetic/v1_train.parquet
-\"\"\"
+"""
 
 import argparse
 import json
@@ -22,16 +22,16 @@ import pandas as pd
 import yaml
 from scipy import stats
 
-# ── load biology parameters ──────────────────────────────────
-CONFIG_PATH = Path(__file__).resolve().parent.parent / \"config\" / \"tilapia_biology_params.yaml\"
-with open(CONFIG_PATH, \"r\") as f:
+# -- load biology parameters ---------------------------------
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "tilapia_biology_params.yaml"
+with open(CONFIG_PATH, "r") as f:
     BIO = yaml.safe_load(f)
 
-G = BIO[\"growth\"]
-M = BIO[\"mortality\"]
-F = BIO[\"feed_conversion\"]
+G = BIO["growth"]
+M = BIO["mortality"]
+F = BIO["feed_conversion"]
 
-# ── constants ────────────────────────────────────────────────
+# -- constants -----------------------------------------------
 RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
 random.seed(RANDOM_SEED)
@@ -41,11 +41,11 @@ LITERATURE_YIELD_LOW_KG_HA = 1500
 LITERATURE_YIELD_HIGH_KG_HA = 8000
 
 
-# ── helper: thermal performance curve (Q10-style) ───────────
+# -- helper: thermal performance curve (Q10-style) ----------
 def sgr_for_temperature(temp_c: float) -> float:
-    \"\"\"Return SGR (%/day) given water temperature.\"\"\"
-    opt_low, opt_high = G[\"sgr_optimal_temp_low_c\"], G[\"sgr_optimal_temp_high_c\"]
-    opt_sgr = G[\"sgr_optimal_value_pct_per_day\"]
+    """Return SGR (%/day) given water temperature."""
+    opt_low, opt_high = G["sgr_optimal_temp_low_c"], G["sgr_optimal_temp_high_c"]
+    opt_sgr = G["sgr_optimal_value_pct_per_day"]
 
     if opt_low <= temp_c <= opt_high:
         return opt_sgr
@@ -56,71 +56,71 @@ def sgr_for_temperature(temp_c: float) -> float:
     return opt_sgr * max(penalty, 0.05)  # floor at 5 % of optimal
 
 
-# ── helper: mortality rate for a single day ──────────────────
+# -- helper: mortality rate for a single day -----------------
 def daily_mortality_rate(temp_c: float, do_mg_l: float, ph: float) -> float:
-    \"\"\"Return daily fractional mortality given environmental conditions.\"\"\"
+    """Return daily fractional mortality given environmental conditions."""
     rate = 0.0
 
     # DO penalty
-    if do_mg_l < M[\"do_lethal_mg_l\"]:
-        rate += M[\"daily_mortality_rate_do_below_lethal\"]
-    elif do_mg_l < M[\"do_critical_mg_l\"]:
-        rate += M[\"daily_mortality_rate_do_below_critical\"]
+    if do_mg_l < M["do_lethal_mg_l"]:
+        rate += M["daily_mortality_rate_do_below_lethal"]
+    elif do_mg_l < M["do_critical_mg_l"]:
+        rate += M["daily_mortality_rate_do_below_critical"]
 
     # Temperature penalty
-    if temp_c > M[\"temp_lethal_high_c\"]:
-        rate += M[\"daily_mortality_rate_temp_above_lethal\"]
-    elif temp_c > M[\"temp_stress_high_c\"]:
-        rate += M[\"daily_mortality_rate_temp_above_stress\"]
+    if temp_c > M["temp_lethal_high_c"]:
+        rate += M["daily_mortality_rate_temp_above_lethal"]
+    elif temp_c > M["temp_stress_high_c"]:
+        rate += M["daily_mortality_rate_temp_above_stress"]
 
-    if temp_c < M[\"temp_lethal_low_c\"]:
+    if temp_c < M["temp_lethal_low_c"]:
         rate += 0.05  # cold-shock mortality, no config yet
-    elif temp_c < M[\"temp_stress_low_c\"]:
+    elif temp_c < M["temp_stress_low_c"]:
         rate += 0.003
 
     # pH penalty
-    if ph < M[\"ph_stress_low\"] or ph > M[\"ph_stress_high\"]:
-        rate += M[\"daily_mortality_rate_ph_outside_stress\"]
-    if ph < M[\"ph_lethal_low\"] or ph > M[\"ph_lethal_high\"]:
+    if ph < M["ph_stress_low"] or ph > M["ph_stress_high"]:
+        rate += M["daily_mortality_rate_ph_outside_stress"]
+    if ph < M["ph_lethal_low"] or ph > M["ph_lethal_high"]:
         rate += 0.05
 
     return min(rate, 0.5)  # cap at 50 % / day
 
 
-# ── helper: FCR by system intensity ──────────────────────────
+# -- helper: FCR by system intensity -------------------------
 def fcr_for_conditions(intensity: str, temp_c: float, do_mg_l: float) -> float:
-    \"\"\"Return FCR given intensity label and stress conditions.\"\"\"
+    """Return FCR given intensity label and stress conditions."""
     low, high = {
-        \"extensive\": (F[\"fcr_extensive_low\"], F[\"fcr_extensive_high\"]),
-        \"semi-intensive\": (F[\"fcr_semi_intensive_low\"], F[\"fcr_semi_intensive_high\"]),
-        \"intensive\": (F[\"fcr_intensive_low\"], F[\"fcr_intensive_high\"]),
+        "extensive": (F["fcr_extensive_low"], F["fcr_extensive_high"]),
+        "semi-intensive": (F["fcr_semi_intensive_low"], F["fcr_semi_intensive_high"]),
+        "intensive": (F["fcr_intensive_low"], F["fcr_intensive_high"]),
     }.get(intensity, (1.2, 2.0))
 
     base = np.random.uniform(low, high)
 
     # Stress worsens FCR
-    if temp_c > M[\"temp_stress_high_c\"] or do_mg_l < M[\"do_critical_mg_l\"]:
+    if temp_c > M["temp_stress_high_c"] or do_mg_l < M["do_critical_mg_l"]:
         base *= 1.15
-    if temp_c > M[\"temp_lethal_high_c\"] or do_mg_l < M[\"do_lethal_mg_l\"]:
+    if temp_c > M["temp_lethal_high_c"] or do_mg_l < M["do_lethal_mg_l"]:
         base *= 1.3
 
     return round(base, 2)
 
 
-# ── helper: generate environmental time series ───────────────
+# -- helper: generate environmental time series --------------
 def generate_env_series(culture_days: int, mean_temp: float, season: str) -> pd.DataFrame:
-    \"\"\"Generate daily temperature, DO, pH with realistic diurnal/seasonal noise.\"\"\"
+    """Generate daily temperature, DO, pH with realistic diurnal/seasonal noise."""
     days = np.arange(culture_days)
 
     # Seasonal temperature trend (simple sinusoid)
-    if season == \"summer\":
+    if season == "summer":
         temp_trend = mean_temp + 1.5 * np.sin(2 * np.pi * days / 365)
-    elif season == \"winter\":
+    elif season == "winter":
         temp_trend = mean_temp - 2.0 * np.sin(2 * np.pi * days / 365)
     else:
         temp_trend = np.full(culture_days, mean_temp)
 
-    # Diurnal noise (±1.5 C)
+    # Diurnal noise (+/-1.5 C)
     temp_noise = np.random.normal(0, 1.0, culture_days)
     temperature = temp_trend + temp_noise
     temperature = np.clip(temperature, 15.0, 40.0)
@@ -138,14 +138,14 @@ def generate_env_series(culture_days: int, mean_temp: float, season: str) -> pd.
     ph = np.clip(ph, 5.0, 10.0)
 
     return pd.DataFrame({
-        \"day\": days,
-        \"temperature_c\": np.round(temperature, 2),
-        \"dissolved_oxygen_mg_l\": np.round(dissolved_oxygen, 2),
-        \"ph\": np.round(ph, 2),
+        "day": days,
+        "temperature_c": np.round(temperature, 2),
+        "dissolved_oxygen_mg_l": np.round(dissolved_oxygen, 2),
+        "ph": np.round(ph, 2),
     })
 
 
-# ── core: simulate one culture cycle ─────────────────────────
+# -- core: simulate one culture cycle ------------------------
 def simulate_cycle(
     pond_area_ha: float,
     stocking_count: int,
@@ -156,7 +156,7 @@ def simulate_cycle(
     intensity: str,
     feed_protein_pct: float,
 ) -> dict:
-    \"\"\"Simulate a single culture cycle and return features + target.\"\"\"
+    """Simulate a single culture cycle and return features + target."""
     env = generate_env_series(culture_days, mean_temp, season)
 
     # Starting biomass
@@ -166,9 +166,9 @@ def simulate_cycle(
 
     # Growth loop (daily time step)
     for day in range(culture_days):
-        temp = env.loc[day, \"temperature_c\"]
-        do = env.loc[day, \"dissolved_oxygen_mg_l\"]
-        ph = env.loc[day, \"ph\"]
+        temp = env.loc[day, "temperature_c"]
+        do = env.loc[day, "dissolved_oxygen_mg_l"]
+        ph = env.loc[day, "ph"]
 
         # Mortality
         mort_rate = daily_mortality_rate(temp, do, ph)
@@ -200,34 +200,34 @@ def simulate_cycle(
         return None  # caller will retry
 
     return {
-        \"pond_area_ha\": round(pond_area_ha, 3),
-        \"stocking_count\": stocking_count,
-        \"stocking_density_fish_ha\": round(stocking_count / pond_area_ha, 0),
-        \"initial_weight_g\": round(initial_weight_g, 1),
-        \"culture_days\": culture_days,
-        \"mean_temperature_c\": round(mean_temp, 1),
-        \"season\": season,
-        \"intensity\": intensity,
-        \"feed_protein_pct\": feed_protein_pct,
-        \"final_survival_count\": survival_count,
-        \"survival_rate\": round(survival_count / stocking_count, 3),
-        \"final_weight_g\": round(final_weight_g, 1),
-        \"total_yield_kg\": round(total_yield_kg, 1),
-        \"yield_kg_per_ha\": round(yield_per_ha, 1),
-        \"total_feed_kg\": round(total_feed_kg, 1),
-        \"fcr_effective\": round(total_feed_kg / total_yield_kg, 2) if total_yield_kg > 0 else None,
-        \"mean_do_mg_l\": round(env[\"dissolved_oxygen_mg_l\"].mean(), 2),
-        \"min_do_mg_l\": round(env[\"dissolved_oxygen_mg_l\"].min(), 2),
-        \"mean_ph\": round(env[\"ph\"].mean(), 2),
-        \"min_ph\": round(env[\"ph\"].min(), 2),
-        \"max_temp_c\": round(env[\"temperature_c\"].max(), 1),
-        \"min_temp_c\": round(env[\"temperature_c\"].min(), 1),
-        \"dataset_version\": \"v1.0.0-mechanistic\",
-        \"generated_at\": datetime.utcnow().isoformat(),
+        "pond_area_ha": round(pond_area_ha, 3),
+        "stocking_count": stocking_count,
+        "stocking_density_fish_ha": round(stocking_count / pond_area_ha, 0),
+        "initial_weight_g": round(initial_weight_g, 1),
+        "culture_days": culture_days,
+        "mean_temperature_c": round(mean_temp, 1),
+        "season": season,
+        "intensity": intensity,
+        "feed_protein_pct": feed_protein_pct,
+        "final_survival_count": survival_count,
+        "survival_rate": round(survival_count / stocking_count, 3),
+        "final_weight_g": round(final_weight_g, 1),
+        "total_yield_kg": round(total_yield_kg, 1),
+        "yield_kg_per_ha": round(yield_per_ha, 1),
+        "total_feed_kg": round(total_feed_kg, 1),
+        "fcr_effective": round(total_feed_kg / total_yield_kg, 2) if total_yield_kg > 0 else None,
+        "mean_do_mg_l": round(env["dissolved_oxygen_mg_l"].mean(), 2),
+        "min_do_mg_l": round(env["dissolved_oxygen_mg_l"].min(), 2),
+        "mean_ph": round(env["ph"].mean(), 2),
+        "min_ph": round(env["ph"].min(), 2),
+        "max_temp_c": round(env["temperature_c"].max(), 1),
+        "min_temp_c": round(env["temperature_c"].min(), 1),
+        "dataset_version": "v1.0.0-mechanistic",
+        "generated_at": datetime.utcnow().isoformat(),
     }
 
 
-# ── batch generator ──────────────────────────────────────────
+# -- batch generator -----------------------------------------
 def generate_dataset(n_samples: int, max_retries: int = 5) -> pd.DataFrame:
     records = []
     attempts = 0
@@ -241,8 +241,8 @@ def generate_dataset(n_samples: int, max_retries: int = 5) -> pd.DataFrame:
         initial_weight = np.random.uniform(5.0, 50.0)  # g
         culture_days = int(np.random.uniform(90, 181))
         mean_temp = np.random.uniform(22.0, 32.0)
-        season = np.random.choice([\"summer\", \"winter\", \"monsoon\"])
-        intensity = np.random.choice([\"extensive\", \"semi-intensive\", \"intensive\"], p=[0.2, 0.6, 0.2])
+        season = np.random.choice(["summer", "winter", "monsoon"])
+        intensity = np.random.choice(["extensive", "semi-intensive", "intensive"], p=[0.2, 0.6, 0.2])
         protein = np.random.choice([25, 30, 35, 40])
 
         result = simulate_cycle(
@@ -262,46 +262,46 @@ def generate_dataset(n_samples: int, max_retries: int = 5) -> pd.DataFrame:
     return df
 
 
-# ── validation tier 1: marginal distributions ────────────────
+# -- validation tier 1: marginal distributions ---------------
 def validate_marginals(df: pd.DataFrame) -> dict:
-    \"\"\"Check that synthetic marginals fall inside literature ranges.\"\"\"
+    """Check that synthetic marginals fall inside literature ranges."""
     checks = {
-        \"yield_kg_per_ha_in_range\": (
-            LITERATURE_YIELD_LOW_KG_HA <= df[\"yield_kg_per_ha\"].mean() <= LITERATURE_YIELD_HIGH_KG_HA
+        "yield_kg_per_ha_in_range": (
+            LITERATURE_YIELD_LOW_KG_HA <= df["yield_kg_per_ha"].mean() <= LITERATURE_YIELD_HIGH_KG_HA
         ),
-        \"mean_temp_in_range\": (20 <= df[\"mean_temperature_c\"].mean() <= 35),
-        \"mean_do_positive\": (df[\"mean_do_mg_l\"].min() > 0),
-        \"survival_rate_0_to_1\": (df[\"survival_rate\"].between(0, 1).all()),
-        \"fcr_positive\": (df[\"fcr_effective\"].dropna() > 0).all(),
+        "mean_temp_in_range": (20 <= df["mean_temperature_c"].mean() <= 35),
+        "mean_do_positive": (df["mean_do_mg_l"].min() > 0),
+        "survival_rate_0_to_1": (df["survival_rate"].between(0, 1).all()),
+        "fcr_positive": (df["fcr_effective"].dropna() > 0).all(),
     }
     return checks
 
 
-# ── validation tier 2: relationship checks ───────────────────
+# -- validation tier 2: relationship checks ------------------
 def validate_relationships(df: pd.DataFrame) -> dict:
-    \"\"\"Check known biological relationships are present.\"\"\"
+    """Check known biological relationships are present."""
     # Higher temp should correlate with lower DO (warm water holds less O2)
-    temp_do_corr = df[\"mean_temperature_c\"].corr(df[\"mean_do_mg_l\"])
+    temp_do_corr = df["mean_temperature_c"].corr(df["mean_do_mg_l"])
     checks = {
-        \"temp_do_negative_corr\": temp_do_corr < -0.1,
-        \"high_temp_reduces_survival\": (
-            df[df[\"mean_temperature_c\"] > 30][\"survival_rate\"].mean()
-            < df[df[\"mean_temperature_c\"] < 28][\"survival_rate\"].mean()
+        "temp_do_negative_corr": temp_do_corr < -0.1,
+        "high_temp_reduces_survival": (
+            df[df["mean_temperature_c"] > 30]["survival_rate"].mean()
+            < df[df["mean_temperature_c"] < 28]["survival_rate"].mean()
         ),
-        \"high_temp_worsens_fcr\": (
-            df[df[\"mean_temperature_c\"] > 30][\"fcr_effective\"].mean()
-            > df[df[\"mean_temperature_c\"] < 28][\"fcr_effective\"].mean()
+        "high_temp_worsens_fcr": (
+            df[df["mean_temperature_c"] > 30]["fcr_effective"].mean()
+            > df[df["mean_temperature_c"] < 28]["fcr_effective"].mean()
         ),
     }
     return checks
 
 
-# ── main ─────────────────────────────────────────────────────
+# -- main ----------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(\"--n_samples\", type=int, default=5000)
-    parser.add_argument(\"--out\", type=str, default=\"data/synthetic/v1_train.parquet\")
-    parser.add_argument(\"--seed\", type=int, default=42)
+    parser.add_argument("--n_samples", type=int, default=5000)
+    parser.add_argument("--out", type=str, default="data/synthetic/v1_train.parquet")
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     np.random.seed(args.seed)
@@ -310,41 +310,47 @@ def main():
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f\"Generating {args.n_samples} synthetic culture cycles …\")\n    df = generate_dataset(args.n_samples)
+    print(f"Generating {args.n_samples} synthetic culture cycles ...")
+    df = generate_dataset(args.n_samples)
 
     # Run three-tier validation
     v1 = validate_marginals(df)
     v2 = validate_relationships(df)
 
-    print(f\"  Marginal checks: {v1}\")
-    print(f\"  Relationship checks: {v2}\")\n
+    print(f"  Marginal checks: {v1}")
+    print(f"  Relationship checks: {v2}")
     all_pass = all(v1.values()) and all(v2.values())
     if not all_pass:
-        print(\"WARNING: Some validation checks failed. Review before training.\")
+        print("WARNING: Some validation checks failed. Review before training.")
     else:
-        print(\"All validation checks passed.\")\n
+        print("All validation checks passed.")
+
     # Save
     df.to_parquet(out_path, index=False)
-    df.head(1000).to_csv(out_path.with_suffix(\".csv\"), index=False)
+    df.head(1000).to_csv(out_path.with_suffix(".csv"), index=False)
 
     # Validation report
     report = {
-        \"dataset_version\": \"v1.0.0-mechanistic\",
-        \"n_samples\": len(df),
-        \"seed\": args.seed,
-        \"generated_at\": datetime.utcnow().isoformat(),
-        \"marginal_validation\": v1,
-        \"relationship_validation\": v2,
-        \"summary_stats\": df.describe().to_dict(),
+        "dataset_version": "v1.0.0-mechanistic",
+        "n_samples": len(df),
+        "seed": args.seed,
+        "generated_at": datetime.utcnow().isoformat(),
+        "marginal_validation": v1,
+        "relationship_validation": v2,
+        "summary_stats": df.describe().to_dict(),
     }
-    report_path = Path(\"data/validation\") / f\"{out_path.stem}_validation.json\"
+    report_path = Path("data/validation") / f"{out_path.stem}_validation.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(report_path, \"w\") as f:
+    with open(report_path, "w") as f:
         json.dump(report, f, indent=2, default=str)
 
-    print(f\"Saved: {out_path}\")\n    print(f\"Report: {report_path}\")\n
+    print(f"Saved: {out_path}")
+    print(f"Report: {report_path}")
+
     # Quick preview
-    print(\"\\nPreview (first 3 rows):\")\n    print(df.head(3).T)
+    print("\nPreview (first 3 rows):")
+    print(df.head(3).T)
 
 
-if __name__ == \"__main__\":\n    main()
+if __name__ == "__main__":
+    main()
