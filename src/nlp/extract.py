@@ -6,7 +6,7 @@ without changing the interface.
 
 Interface contract (never change without updating the API):
   extract_farmer_input(text: str) -> dict with keys:
-    - "structured":  dict of extracted field → value
+    - "structured":  dict of extracted field -> value
     - "missing_fields": list of required fields still missing
     - "confidence": "high" | "medium" | "low"
 """
@@ -39,6 +39,8 @@ _PATTERNS = {
     "initial_weight_g": [
         r"initial\s*weight\s*(?:of|is)?\s*(\d+(?:\.\d+)?)\s*(?:g|grams|gram)",
         r"(\d+(?:\.\d+)?)\s*(?:g|grams|gram)\s*(?:fingerlings|seeds)",
+        r"at\s*(\d+(?:\.\d+)?)\s*(?:g|grams|gram)\s*(?:each|per)",  # "at 15g each"
+        r"weight\s*(?:of|is)?\s*(\d+(?:\.\d+)?)\s*(?:g|grams|gram)",
     ],
     "culture_days": [
         r"(\d{2,3})\s*(?:days|day)",
@@ -60,6 +62,7 @@ _PATTERNS = {
     "mean_do_mg_l": [
         r"(?:do|dissolved\s*oxygen)\s*(?:is|of|around)?\s*(\d+(?:\.\d+)?)\s*(?:mg/?l|mg\s*per\s*litre|mg\s*per\s*liter)",
         r"oxygen\s*(?:level|concentration)?\s*(?:is|of)?\s*(\d+(?:\.\d+)?)",
+        r"\bDO\s*(?:is|of|around)?\s*(\d+(?:\.\d+)?)",  # "DO 7.5"
     ],
     "min_do_mg_l": [
         r"(?:lowest|minimum|min)\s*(?:do|dissolved\s*oxygen)\s*(?:is|of|drops\s*to)?\s*(\d+(?:\.\d+)?)",
