@@ -8,6 +8,7 @@ xgboost
 lightgbm
 fastapi
 uvicorn
+uvicorn[standard]
 streamlit
 requests
 authlib
