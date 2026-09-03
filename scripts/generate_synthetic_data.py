@@ -1,4 +1,10 @@
-﻿"""APF V1 -- Mechanistic synthetic data generator for Nile tilapia."""
+"""APF V1 -- Improved mechanistic synthetic data generator for Nile tilapia.
+Changes from v1.0.2:
+- Wider DO variance (more realistic hypoxia events)
+- Wider pH variance (more realistic pH stress)
+- Added DO/pH stress day counters
+- Better environmental correlation structure
+"""
 import argparse, json, random, sys
 from datetime import datetime
 from pathlib import Path
@@ -61,22 +67,62 @@ def fcr_for_conditions(intensity: str, temp_c: float, do_mg_l: float) -> float:
         base *= 1.3
     return round(base, 2)
 
-def generate_env_series(culture_days: int, mean_temp: float, season: str) -> pd.DataFrame:
+def generate_env_series(culture_days: int, mean_temp: float, season: str, intensity: str) -> pd.DataFrame:
+    """Generate daily environmental time series with realistic variance."""
     days = np.arange(culture_days)
+
+    # Temperature: seasonal trend + daily noise + occasional heat waves
     if season == "summer":
         temp_trend = mean_temp + 1.5 * np.sin(2 * np.pi * days / 365)
     elif season == "winter":
         temp_trend = mean_temp - 2.0 * np.sin(2 * np.pi * days / 365)
-    else:
+    else:  # monsoon
         temp_trend = np.full(culture_days, mean_temp)
-    temp_noise = np.random.normal(0, 1.0, culture_days)
+
+    # Add occasional heat waves (3-7 day spikes)
+    n_heat_waves = np.random.poisson(culture_days / 60)  # ~1 per 2 months
+    for _ in range(n_heat_waves):
+        start = np.random.randint(0, max(culture_days - 3, 1))
+        duration = np.random.randint(3, 8)
+        spike = np.random.uniform(2, 5)
+        temp_trend[start:min(start+duration, culture_days)] += spike
+
+    temp_noise = np.random.normal(0, 1.5, culture_days)  # increased from 1.0
     temperature = np.clip(temp_trend + temp_noise, 15.0, 40.0)
-    do_base = 8.0 - 0.15 * (temperature - 25.0)
-    do_noise = np.random.normal(0, 0.8, culture_days)
-    dissolved_oxygen = np.clip(do_base + do_noise, 0.1, 15.0)
+
+    # DO: anti-correlated with temp, wider variance, occasional hypoxia events
+    # Intensive systems have worse DO due to higher biomass
+    do_intensity_penalty = {"extensive": 0, "semi-intensive": 0.3, "intensive": 0.8}.get(intensity, 0)
+    do_base = 8.5 - 0.18 * (temperature - 25.0) - do_intensity_penalty
+
+    # Add occasional hypoxia events (algae blooms, overcast days)
+    n_hypoxia = np.random.poisson(culture_days / 45)  # ~1 per 1.5 months
+    do_hypoxia = np.zeros(culture_days)
+    for _ in range(n_hypoxia):
+        start = np.random.randint(0, max(culture_days - 2, 1))
+        duration = np.random.randint(2, 5)
+        drop = np.random.uniform(2, 5)
+        do_hypoxia[start:min(start+duration, culture_days)] -= drop
+
+    do_noise = np.random.normal(0, 1.2, culture_days)  # increased from 0.8
+    dissolved_oxygen = np.clip(do_base + do_hypoxia + do_noise, 0.1, 15.0)
+
+    # pH: wider variance, occasional acidification/alkaline spikes
     ph_base = 7.5 + 0.05 * (dissolved_oxygen - 7.0)
-    ph_noise = np.random.normal(0, 0.3, culture_days)
-    ph = np.clip(ph_base + ph_noise, 5.0, 10.0)
+
+    # Add occasional pH spikes (rain runoff, algal blooms)
+    n_ph_spikes = np.random.poisson(culture_days / 60)
+    ph_spikes = np.zeros(culture_days)
+    for _ in range(n_ph_spikes):
+        start = np.random.randint(0, max(culture_days - 1, 1))
+        duration = np.random.randint(1, 4)
+        direction = np.random.choice([-1, 1])
+        magnitude = np.random.uniform(0.5, 2.0)
+        ph_spikes[start:min(start+duration, culture_days)] += direction * magnitude
+
+    ph_noise = np.random.normal(0, 0.6, culture_days)  # increased from 0.3
+    ph = np.clip(ph_base + ph_spikes + ph_noise, 4.0, 11.0)
+
     return pd.DataFrame({
         "day": days,
         "temperature_c": np.round(temperature, 2),
@@ -85,7 +131,7 @@ def generate_env_series(culture_days: int, mean_temp: float, season: str) -> pd.
     })
 
 def simulate_cycle(pond_area_ha, stocking_count, initial_weight_g, culture_days, mean_temp, season, intensity, feed_protein_pct):
-    env = generate_env_series(culture_days, mean_temp, season)
+    env = generate_env_series(culture_days, mean_temp, season, intensity)
     temp_arr = env["temperature_c"].to_numpy()
     do_arr = env["dissolved_oxygen_mg_l"].to_numpy()
     ph_arr = env["ph"].to_numpy()
@@ -95,6 +141,9 @@ def simulate_cycle(pond_area_ha, stocking_count, initial_weight_g, culture_days,
     survival_count = stocking_count
     total_feed_kg = 0.0
     stress_days = 0
+    do_stress_days = 0
+    ph_stress_days = 0
+    temp_stress_days = 0
     bg_rate = M.get("daily_background_mortality_rate", 0.0)
 
     for day in range(culture_days):
@@ -105,6 +154,13 @@ def simulate_cycle(pond_area_ha, stocking_count, initial_weight_g, culture_days,
         mort_rate = daily_mortality_rate(temp, do, ph)
         if mort_rate > bg_rate:
             stress_days += 1
+            if do < M["do_stress_mg_l"]:
+                do_stress_days += 1
+            if ph < M["ph_stress_low"] or ph > M["ph_stress_high"]:
+                ph_stress_days += 1
+            if temp > M["temp_stress_high_c"]:
+                temp_stress_days += 1
+
         daily_deaths = int(np.random.binomial(survival_count, mort_rate))
         survival_count -= daily_deaths
         if survival_count <= 0:
@@ -149,13 +205,16 @@ def simulate_cycle(pond_area_ha, stocking_count, initial_weight_g, culture_days,
         "total_feed_kg": round(total_feed_kg, 1),
         "fcr_effective": fcr_effective,
         "stress_days": stress_days,
+        "do_stress_days": do_stress_days,
+        "ph_stress_days": ph_stress_days,
+        "temp_stress_days": temp_stress_days,
         "mean_do_mg_l": round(env["dissolved_oxygen_mg_l"].mean(), 2),
         "min_do_mg_l": round(env["dissolved_oxygen_mg_l"].min(), 2),
         "mean_ph": round(env["ph"].mean(), 2),
         "min_ph": round(env["ph"].min(), 2),
         "max_temp_c": round(env["temperature_c"].max(), 1),
         "min_temp_c": round(env["temperature_c"].min(), 1),
-        "dataset_version": "v1.0.2-mechanistic",
+        "dataset_version": "v1.1.0-mechanistic",
         "generated_at": datetime.utcnow().isoformat(),
     }
 
@@ -187,6 +246,9 @@ def validate_marginals(df: pd.DataFrame) -> dict:
         "fcr_positive": (df["fcr_effective"].dropna() > 0).all(),
         "fcr_no_impossible_values": (df["fcr_effective"].dropna() >= 1.0).all(),
         "survival_has_realistic_spread": (df["survival_rate"].min() < 0.85) and (df["survival_rate"].mean() < 0.97),
+        "do_stress_present": (df["do_stress_days"].max() > 0),
+        "ph_stress_present": (df["ph_stress_days"].max() > 0),
+        "temp_stress_present": (df["temp_stress_days"].max() > 0),
     }
 
 def validate_relationships(df: pd.DataFrame) -> dict:
@@ -195,6 +257,9 @@ def validate_relationships(df: pd.DataFrame) -> dict:
         "temp_do_negative_corr": temp_do_corr < -0.1,
         "high_temp_reduces_survival": df[df["mean_temperature_c"] > 30]["survival_rate"].mean() < df[df["mean_temperature_c"] < 28]["survival_rate"].mean(),
         "high_temp_worsens_fcr": df[df["mean_temperature_c"] > 30]["fcr_effective"].mean() > df[df["mean_temperature_c"] < 28]["fcr_effective"].mean(),
+        "do_stress_reduces_survival": df[df["do_stress_days"] > 0]["survival_rate"].mean() < df[df["do_stress_days"] == 0]["survival_rate"].mean(),
+        "ph_stress_reduces_survival": df[df["ph_stress_days"] > 0]["survival_rate"].mean() < df[df["ph_stress_days"] == 0]["survival_rate"].mean(),
+        "intensity_affects_fcr": df.groupby("intensity")["fcr_effective"].std() > 0.05,
     }
 
 def main():
@@ -217,7 +282,7 @@ def main():
     df.to_parquet(out_path, index=False)
     df.head(1000).to_csv(out_path.with_suffix(".csv"), index=False)
     report = {
-        "dataset_version": "v1.0.2-mechanistic",
+        "dataset_version": "v1.1.0-mechanistic",
         "n_samples": len(df),
         "seed": args.seed,
         "generated_at": datetime.utcnow().isoformat(),
