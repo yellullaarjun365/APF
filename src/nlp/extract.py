@@ -1,154 +1,273 @@
-"""APF V1 -- NLP extraction module (M3).
-Converts free-text farmer descriptions into structured JSON suitable
-for the forecasting model. Uses a lightweight rule-based parser with
-regex fallback. Designed to be swapped for an LLM (Claude / local model)
-without changing the interface.
+"""APF V1 -- Information extraction from free-text farmer input (M4).
 
-Interface contract (never change without updating the API):
-  extract_farmer_input(text: str) -> dict with keys:
-    - "structured":  dict of extracted field -> value
-    - "missing_fields": list of required fields still missing
-    - "confidence": "high" | "medium" | "low"
+Converts natural language pond descriptions into structured parameters.
+V1 uses rule-based extraction. V2+ should integrate an LLM.
+
+Usage:
+    from src.nlp.extract import extract_pond_params
+    params = extract_pond_params("I have a 0.5 ha pond with 3000 fish...")
 """
 import re
-from typing import Any
+from typing import Optional
 
-# ------------------------------------------------------------------
 # Required fields for a complete prediction
-# ------------------------------------------------------------------
 REQUIRED_FIELDS = [
-    "pond_area_ha", "stocking_count", "initial_weight_g", "culture_days",
-    "mean_temperature_c", "season", "intensity", "feed_protein_pct",
-    "mean_do_mg_l", "min_do_mg_l", "mean_ph", "min_ph",
-    "max_temp_c", "min_temp_c",
+    "pond_area_ha",
+    "stocking_count", 
+    "culture_days",
+    "mean_temperature_c",
 ]
 
-# ------------------------------------------------------------------
-# Regex patterns for each field
-# ------------------------------------------------------------------
-_PATTERNS = {
-    "pond_area_ha": [
-        r"(\d+(?:\.\d+)?)\s*(?:ha|hectare|hectares|acre|acres)",
-        r"pond\s*(?:area|size)?\s*(?:of|is)?\s*(\d+(?:\.\d+)?)\s*(?:ha|hectare|hectares|acre|acres)",
-    ],
-    "stocking_count": [
-        r"(\d{3,6})\s*(?:fish|fingerlings|tilapia|stocked|seeds)",
-        r"stocked\s*(\d{3,6})",
-        r"stocking\s*(?:count|density)?\s*(?:of|is)?\s*(\d{3,6})",
-    ],
-    "initial_weight_g": [
-        r"initial\s*weight\s*(?:of|is)?\s*(\d+(?:\.\d+)?)\s*(?:g|grams|gram)",
-        r"(\d+(?:\.\d+)?)\s*(?:g|grams|gram)\s*(?:fingerlings|seeds)",
-        r"at\s*(\d+(?:\.\d+)?)\s*(?:g|grams|gram)\s*(?:each|per)",  # "at 15g each"
-        r"weight\s*(?:of|is)?\s*(\d+(?:\.\d+)?)\s*(?:g|grams|gram)",
-    ],
-    "culture_days": [
-        r"(\d{2,3})\s*(?:days|day)",
-        r"culture\s*(?:period|duration|days)?\s*(?:of|is)?\s*(\d{2,3})",
-        r"grow\s*(?:them|the fish)?\s*for\s*(\d{2,3})\s*(?:days|day)",
-    ],
-    "mean_temperature_c": [
-        r"(?:temperature|temp)\s*(?:is|of|around|about)?\s*(\d{2}(?:\.\d+)?)\s*(?:°?C|degrees?)",
-        r"(\d{2}(?:\.\d+)?)\s*(?:°?C|degrees?)\s*(?:temperature|temp)",
-    ],
-    "max_temp_c": [
-        r"max(?:imum)?\s*(?:temperature|temp)\s*(?:is|of|around)?\s*(\d{2}(?:\.\d+)?)\s*(?:°?C|degrees?)",
-        r"(?:temperature|temp)\s*(?:goes|reaches|peaks)\s*(?:up\s*to|at)\s*(\d{2}(?:\.\d+)?)",
-    ],
-    "min_temp_c": [
-        r"min(?:imum)?\s*(?:temperature|temp)\s*(?:is|of|around)?\s*(\d{2}(?:\.\d+)?)\s*(?:°?C|degrees?)",
-        r"(?:temperature|temp)\s*(?:drops\s*to|goes\s*down\s*to)\s*(\d{2}(?:\.\d+)?)",
-    ],
-    "mean_do_mg_l": [
-        r"(?:do|dissolved\s*oxygen)\s*(?:is|of|around)?\s*(\d+(?:\.\d+)?)\s*(?:mg/?l|mg\s*per\s*litre|mg\s*per\s*liter)",
-        r"oxygen\s*(?:level|concentration)?\s*(?:is|of)?\s*(\d+(?:\.\d+)?)",
-        r"\bDO\s*(?:is|of|around)?\s*(\d+(?:\.\d+)?)",  # "DO 7.5"
-    ],
-    "min_do_mg_l": [
-        r"(?:lowest|minimum|min)\s*(?:do|dissolved\s*oxygen)\s*(?:is|of|drops\s*to)?\s*(\d+(?:\.\d+)?)",
-    ],
-    "mean_ph": [
-        r"(?:ph|pH)\s*(?:is|of|around)?\s*(\d+(?:\.\d+)?)",
-    ],
-    "min_ph": [
-        r"(?:lowest|minimum|min)\s*(?:ph|pH)\s*(?:is|of|drops\s*to)?\s*(\d+(?:\.\d+)?)",
-    ],
-    "feed_protein_pct": [
-        r"(?:protein|feed\s*protein)\s*(?:is|of|around)?\s*(\d{2})\s*%",
-        r"(\d{2})\s*%\s*(?:protein|feed\s*protein)",
-    ],
-    "season": [
-        r"\b(summer|winter|monsoon|rabi|kharif)\b",
-    ],
-    "intensity": [
-        r"\b(extensive|semi[- ]?intensive|intensive)\b",
-    ],
+# Default values for optional fields
+DEFAULTS = {
+    "initial_weight_g": 15.0,
+    "season": "summer",
+    "intensity": "semi-intensive",
+    "feed_protein_pct": 30.0,
+    "mean_do_mg_l": 7.5,
+    "min_do_mg_l": 5.0,
+    "mean_ph": 7.5,
+    "min_ph": 6.8,
+    "max_temp_c": 32.0,
+    "min_temp_c": 24.0,
 }
 
-# ------------------------------------------------------------------
-# Post-processors
-# ------------------------------------------------------------------
-_CONVERTERS = {
-    "pond_area_ha": lambda v: float(v) * 0.4047 if "acre" in str(v).lower() else float(v),
-    "stocking_count": int,
-    "initial_weight_g": float,
-    "culture_days": int,
-    "mean_temperature_c": float,
-    "max_temp_c": float,
-    "min_temp_c": float,
-    "mean_do_mg_l": float,
-    "min_do_mg_l": float,
-    "mean_ph": float,
-    "min_ph": float,
-    "feed_protein_pct": int,
-    "season": lambda v: v.lower().replace("rabi", "winter").replace("kharif", "summer").replace("monsoon", "monsoon"),
-    "intensity": lambda v: v.lower().replace("semi intensive", "semi-intensive").replace("semiintensive", "semi-intensive"),
-}
+SEASONS = ["summer", "winter", "monsoon"]
+INTENSITIES = ["extensive", "semi-intensive", "intensive"]
 
-def _extract_field(text: str, field: str) -> Any | None:
-    """Try every regex pattern for a field until one matches."""
+
+def extract_pond_params(text: str) -> dict:
+    """Extract structured pond parameters from free text.
+
+    Returns a dict with extracted values + missing field info.
+    """
     text_lower = text.lower()
-    for pat in _PATTERNS.get(field, []):
-        m = re.search(pat, text_lower, re.IGNORECASE)
-        if m:
-            raw = m.group(1)
-            try:
-                return _CONVERTERS[field](raw)
-            except Exception:
-                return None
-    return None
+    extracted = {}
 
-def extract_farmer_input(text: str) -> dict:
-    """Main entry point. Extracts structured data from free text."""
-    structured = {}
-    for field in REQUIRED_FIELDS:
-        val = _extract_field(text, field)
-        if val is not None:
-            structured[field] = val
+    # Pond area
+    area = _extract_area(text_lower)
+    if area is not None:
+        extracted["pond_area_ha"] = area
 
-    missing = [f for f in REQUIRED_FIELDS if f not in structured]
+    # Stocking count
+    count = _extract_stocking_count(text_lower)
+    if count is not None:
+        extracted["stocking_count"] = count
 
-    # Infer min_temp_c / max_temp_c from mean if only mean is given
-    if "mean_temperature_c" in structured and "max_temp_c" not in structured:
-        structured["max_temp_c"] = round(structured["mean_temperature_c"] + 3.0, 1)
-    if "mean_temperature_c" in structured and "min_temp_c" not in structured:
-        structured["min_temp_c"] = round(structured["mean_temperature_c"] - 3.0, 1)
+    # Culture duration
+    days = _extract_duration(text_lower)
+    if days is not None:
+        extracted["culture_days"] = days
 
-    # Infer min_do from mean if only mean is given
-    if "mean_do_mg_l" in structured and "min_do_mg_l" not in structured:
-        structured["min_do_mg_l"] = round(structured["mean_do_mg_l"] - 1.5, 2)
+    # Temperature
+    temp = _extract_temperature(text_lower)
+    if temp is not None:
+        extracted["mean_temperature_c"] = temp
 
-    # Infer min_ph from mean if only mean is given
-    if "mean_ph" in structured and "min_ph" not in structured:
-        structured["min_ph"] = round(structured["mean_ph"] - 0.3, 2)
+    # DO
+    do = _extract_do(text_lower)
+    if do is not None:
+        extracted["mean_do_mg_l"] = do
 
-    # Recompute missing after inferences
-    missing = [f for f in REQUIRED_FIELDS if f not in structured]
+    # pH
+    ph = _extract_ph(text_lower)
+    if ph is not None:
+        extracted["mean_ph"] = ph
 
-    confidence = "high" if len(missing) == 0 else ("medium" if len(missing) <= 3 else "low")
+    # Initial weight
+    weight = _extract_weight(text_lower)
+    if weight is not None:
+        extracted["initial_weight_g"] = weight
+
+    # Season
+    season = _extract_season(text_lower)
+    if season is not None:
+        extracted["season"] = season
+
+    # Intensity
+    intensity = _extract_intensity(text_lower)
+    if intensity is not None:
+        extracted["intensity"] = intensity
+
+    # Derive min/max from means
+    _derive_bounds(extracted)
+
+    # Check completeness
+    missing = [f for f in REQUIRED_FIELDS if f not in extracted or extracted[f] is None]
+
+    # Fill defaults for optional fields
+    for k, v in DEFAULTS.items():
+        if k not in extracted or extracted[k] is None:
+            extracted[k] = v
 
     return {
-        "structured": structured,
+        "extracted": extracted,
         "missing_fields": missing,
-        "confidence": confidence,
+        "is_complete": len(missing) == 0,
     }
+
+
+def _extract_area(text: str) -> Optional[float]:
+    """Extract pond area in hectares."""
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:ha|hectare|hectares|acre|acres)', text)
+    if m:
+        val = float(m.group(1))
+        if 'acre' in text:
+            val *= 0.4047
+        return round(val, 2)
+    return None
+
+
+def _extract_stocking_count(text: str) -> Optional[int]:
+    """Extract number of fish stocked."""
+    patterns = [
+        r'(\d{1,3}(?:,\d{3})+)\s*(?:fish|fingerlings|stocked|stocking|tilapia)',
+        r'(\d+)\s*(?:fish|fingerlings|stocked|stocking|tilapia)',
+        r'stocked\s*(\d{1,3}(?:,\d{3})+)',
+        r'stocking\s*(\d{1,3}(?:,\d{3})+)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            return int(m.group(1).replace(',', ''))
+    return None
+
+
+def _extract_duration(text: str) -> Optional[int]:
+    """Extract culture duration in days."""
+    m = re.search(r'(\d+)\s*days?', text)
+    if m:
+        return int(m.group(1))
+
+    m = re.search(r'(\d+)\s*weeks?', text)
+    if m:
+        return int(m.group(1)) * 7
+
+    m = re.search(r'(\d+)\s*months?', text)
+    if m:
+        return int(m.group(1)) * 30
+
+    return None
+
+
+def _extract_temperature(text: str) -> Optional[float]:
+    """Extract water temperature in Celsius."""
+    patterns = [
+        r'(\d+(?:\.\d+)?)\s*(?:\u00b0c|c|degrees?\s*c)',
+        r'temperature\s*(?:is|of|=)?\s*(\d+(?:\.\d+)?)',
+        r'temp\s*(?:is|of|=)?\s*(\d+(?:\.\d+)?)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            return float(m.group(1))
+    return None
+
+
+def _extract_do(text: str) -> Optional[float]:
+    """Extract dissolved oxygen in mg/L."""
+    patterns = [
+        r'(\d+(?:\.\d+)?)\s*(?:mg/l|mg\s*/\s*l|do|dissolved\s*oxygen)',
+        r'do\s*(?:is|of|=)?\s*(\d+(?:\.\d+)?)',
+        r'oxygen\s*(?:is|of|=)?\s*(\d+(?:\.\d+)?)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            val = float(m.group(1))
+            if 0.5 <= val <= 20:
+                return val
+    return None
+
+
+def _extract_ph(text: str) -> Optional[float]:
+    """Extract pH value."""
+    patterns = [
+        r'ph\s*(?:is|of|=)?\s*(\d+(?:\.\d+)?)',
+        r'pH\s*(?:is|of|=)?\s*(\d+(?:\.\d+)?)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            val = float(m.group(1))
+            if 4 <= val <= 11:
+                return val
+    return None
+
+
+def _extract_weight(text: str) -> Optional[float]:
+    """Extract initial fish weight in grams."""
+    patterns = [
+        r'(\d+(?:\.\d+)?)\s*(?:g|grams?)',
+        r'weight\s*(?:is|of|=)?\s*(\d+(?:\.\d+)?)\s*(?:g|grams?)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            val = float(m.group(1))
+            if val < 5:
+                val *= 1000
+            return val
+    return None
+
+
+def _extract_season(text: str) -> Optional[str]:
+    """Extract season from text."""
+    for season in SEASONS:
+        if season in text:
+            return season
+    return None
+
+
+def _extract_intensity(text: str) -> Optional[str]:
+    """Extract culture intensity from text."""
+    for intensity in INTENSITIES:
+        if intensity in text:
+            return intensity
+    return None
+
+
+def _derive_bounds(extracted: dict):
+    """Derive min/max values from mean values."""
+    if "mean_do_mg_l" in extracted and "min_do_mg_l" not in extracted:
+        extracted["min_do_mg_l"] = extracted["mean_do_mg_l"] - 1.5
+    if "mean_ph" in extracted and "min_ph" not in extracted:
+        extracted["min_ph"] = extracted["mean_ph"] - 0.3
+    if "mean_temperature_c" in extracted:
+        if "max_temp_c" not in extracted:
+            extracted["max_temp_c"] = extracted["mean_temperature_c"] + 3
+        if "min_temp_c" not in extracted:
+            extracted["min_temp_c"] = extracted["mean_temperature_c"] - 3
+
+
+def generate_followup_question(missing_fields: list) -> str:
+    """Generate a natural follow-up question for missing fields."""
+    field_names = {
+        "pond_area_ha": "pond area",
+        "stocking_count": "number of fish stocked",
+        "culture_days": "culture duration",
+        "mean_temperature_c": "water temperature",
+    }
+    names = [field_names.get(f, f.replace("_", " ")) for f in missing_fields]
+
+    if len(names) == 1:
+        return f"I need your {names[0]} to make a forecast. Could you provide that?"
+    elif len(names) == 2:
+        return f"I need your {names[0]} and {names[1]} to make a forecast. Could you provide these?"
+    else:
+        return f"I need a few more details: {', '.join(names)}. Could you provide these?"
+
+
+if __name__ == "__main__":
+    test_inputs = [
+        "I have a 0.5 ha pond with 3000 fish for 120 days at 28C",
+        "My pond is 2 acres with 5000 tilapia, temp is 30 degrees",
+        "Stocked 10000 fish in 1 hectare, 4 months culture",
+    ]
+    for text in test_inputs:
+        result = extract_pond_params(text)
+        print(f"Input: {text}")
+        print(f"  Extracted: {result['extracted']}")
+        print(f"  Missing: {result['missing_fields']}")
+        print(f"  Complete: {result['is_complete']}")
+        print()

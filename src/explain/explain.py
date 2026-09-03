@@ -1,112 +1,165 @@
-"""APF V1 -- Explanation layer (M3 placeholder).
-Generates natural-language explanations of model predictions.
+"""APF V1 -- Explanation generation layer (M5).
 
-Current implementation: rule-based template (no external LLM needed).
-Future: swap _generate_explanation() for a call to Claude API or
-a local LLM, keeping the same input/output signature.
+Converts structured prediction results into natural language explanations.
+V1 uses template-based generation. V2+ should integrate an LLM.
+
+Usage:
+    from src.explain.explain import generate_explanation
+    explanation = generate_explanation(params, prediction_result)
 """
-from typing import Any
+from typing import Dict, List, Any
 
-def explain(prediction: dict, params: dict, lang: str = "en") -> str:
-    """Generate a farmer-friendly explanation of the forecast.
+
+def generate_explanation(params: dict, result: dict) -> str:
+    """Generate a natural language explanation of the prediction.
 
     Args:
-        prediction: dict from /predict endpoint (point_estimate_kg,
-                    lower_bound_kg, upper_bound_kg, top_factors, ...)
-        params: the structured input parameters used for the prediction
-        lang: "en" for English, "te" for Telugu (placeholder)
+        params: The pond parameters used for prediction
+        result: The prediction result dict with point_estimate_kg, etc.
 
     Returns:
-        A plain-text explanation string.
+        A human-readable explanation string
     """
-    if lang != "en":
-        # Telugu placeholder — requires a real translation layer or LLM
-        return _explain_te(prediction, params)
+    pe = result.get("point_estimate_kg", 0)
+    lb = result.get("lower_bound_kg", 0)
+    ub = result.get("upper_bound_kg", 0)
 
-    point = prediction["point_estimate_kg"]
-    low = prediction["lower_bound_kg"]
-    high = prediction["upper_bound_kg"]
-    factors = prediction["top_factors"]
+    area = params.get("pond_area_ha", 0.5)
+    stocking = params.get("stocking_count", 0)
+    density = stocking / area if area > 0 else 0
+    days = params.get("culture_days", 0)
+    temp = params.get("mean_temperature_c", 28)
+    do = params.get("mean_do_mg_l", 7.5)
+    ph = params.get("mean_ph", 7.5)
+    intensity = params.get("intensity", "semi-intensive")
 
-    # Build factor sentences
-    factor_sentences = []
-    for f in factors[:3]:
-        name = _prettify_feature(f["feature"])
-        direction = "increases" if f["impact_kg"] > 0 else "reduces"
-        factor_sentences.append(
-            f"- **{name}** {direction} the forecast by about {abs(f['impact_kg']):.0f} kg."
-        )
-
-    # Water quality advisory
-    wq_advice = []
-    if params.get("min_do_mg_l", 10) < 3.0:
-        wq_advice.append("Low dissolved oxygen is a major risk — consider aeration or reducing stocking density.")
-    if params.get("max_temp_c", 25) > 32:
-        wq_advice.append("High temperatures increase disease risk — monitor for streptococcosis.")
-    if params.get("min_ph", 7) < 6.0:
-        wq_advice.append("Acidic conditions stress the fish — check for acid runoff or algal crash.")
-
-    advice_block = "
-".join(wq_advice) if wq_advice else "Water quality parameters look acceptable for the planned cycle."
-
-    return (
-        f"## Harvest Forecast
-
-"
-        f"Expected harvest: **{point:.0f} kg** of tilapia.
-
-"
-        f"The model is 90% confident the actual harvest will fall between "
-        f"**{low:.0f} kg** and **{high:.0f} kg**.
-
-"
-        f"### What Drives This Forecast
-
-"
-        f"The three biggest factors are:
-
-"
-        + "
-".join(factor_sentences) +
-        f"
-
-### Water Quality Check
-
-"
-        f"{advice_block}
-
-"
-        f"*This forecast is based on a synthetic-data-trained model. "
-        f"Use it for planning, not as a guarantee.*"
+    # Main prediction statement
+    explanation = (
+        f"Based on your pond parameters, I estimate a harvest of **{pe:.0f} kg** "
+        f"of Nile tilapia. The 90% confidence interval is {lb:.0f}--{ub:.0f} kg.\n\n"
     )
 
-def _prettify_feature(raw: str) -> str:
-    """Convert raw feature names to human-readable labels."""
-    mapping = {
-        "stocking_count": "number of fish stocked",
-        "initial_weight_g": "initial fish size",
-        "culture_days": "culture duration",
-        "mean_temperature_c": "average water temperature",
-        "pond_area_ha": "pond size",
-        "stocking_density_fish_ha": "stocking density",
-        "mean_do_mg_l": "dissolved oxygen level",
-        "min_do_mg_l": "minimum dissolved oxygen",
-        "do_temp_interaction": "oxygen-temperature interaction",
-        "temp_stress_degdays": "heat stress accumulation",
-        "stress_days": "number of stressful days",
-        "density_x_do_deficit": "density vs oxygen shortage",
-        "max_temp_c": "peak temperature",
-        "min_temp_c": "lowest temperature",
-        "temp_range": "daily temperature swing",
-        "feed_protein_pct": "feed protein content",
+    # Context about the operation
+    explanation += (
+        f"You have {stocking:,} fish stocked in {area:.1f} hectares "
+        f"(stocking density of approximately {density:,.0f} fish/ha), "
+        f"with a planned culture period of {days} days. "
+        f"This is classified as a {intensity} system.\n\n"
+    )
+
+    # Water quality commentary
+    wq_comments = []
+    if do < 3:
+        wq_comments.append(
+            "Your dissolved oxygen is critically low. "
+            "Immediate aeration is recommended to prevent mass mortality."
+        )
+    elif do < 4:
+        wq_comments.append(
+            "Your dissolved oxygen is below the stress threshold. "
+            "Consider increasing water exchange or aeration."
+        )
+    elif do < 5:
+        wq_comments.append(
+            "Your dissolved oxygen is on the lower side. "
+            "Monitor closely and consider mild aeration during peak hours."
+        )
+
+    if temp > 35:
+        wq_comments.append(
+            "Water temperature is near the lethal maximum. "
+            "Shade the pond and increase water exchange immediately."
+        )
+    elif temp > 32:
+        wq_comments.append(
+            "High temperature increases metabolic stress and disease risk. "
+            "Ensure adequate DO and consider partial shading."
+        )
+    elif temp < 20:
+        wq_comments.append(
+            "Temperature is below optimal. Growth rate will be reduced. "
+            "Consider delaying stocking or using greenhouses."
+        )
+
+    if ph < 6.0:
+        wq_comments.append(
+            "pH is acidic. This can stress fish and damage gills. "
+            "Apply agricultural lime to raise pH."
+        )
+    elif ph > 9.0:
+        wq_comments.append(
+            "pH is alkaline. Ammonia toxicity increases at high pH. "
+            "Check total ammonia nitrogen levels."
+        )
+
+    if wq_comments:
+        explanation += "**Water Quality Notes:**\n"
+        for comment in wq_comments:
+            explanation += f"- {comment}\n"
+        explanation += "\n"
+
+    # Top factors from model
+    top_factors = result.get("top_factors", [])
+    if top_factors:
+        explanation += "**Key factors driving this forecast:**\n"
+        for i, factor in enumerate(top_factors[:4], 1):
+            feat_name = factor["feature"].replace("num__", "").replace("cat__", "").replace("_", " ").title()
+            explanation += f"{i}. {feat_name}\n"
+        explanation += "\n"
+
+    # General recommendation
+    explanation += (
+        "**Recommendation:** Continue monitoring water quality daily. "
+        "If DO drops below 3 mg/L or temperature exceeds 35C, "
+        "take immediate corrective action. Regular feeding based on "
+        "the estimated biomass will help achieve the forecasted yield."
+    )
+
+    return explanation
+
+
+def generate_brief_explanation(params: dict, result: dict) -> str:
+    """Generate a shorter explanation for chat responses."""
+    pe = result.get("point_estimate_kg", 0)
+    lb = result.get("lower_bound_kg", 0)
+    ub = result.get("upper_bound_kg", 0)
+    area = params.get("pond_area_ha", 0.5)
+    stocking = params.get("stocking_count", 0)
+    density = stocking / area if area > 0 else 0
+    days = params.get("culture_days", 0)
+    temp = params.get("mean_temperature_c", 28)
+
+    return (
+        f"I estimate a harvest of **{pe:.0f} kg** ({lb:.0f}--{ub:.0f} kg at 90% confidence). "
+        f"With {stocking:,} fish in {area:.1f} ha (density ~{density:,.0f} fish/ha) "
+        f"over {days} days at {temp}C, this yield is consistent with your system parameters."
+    )
+
+
+if __name__ == "__main__":
+    test_params = {
+        "pond_area_ha": 0.5,
+        "stocking_count": 3000,
+        "initial_weight_g": 15.0,
+        "culture_days": 120,
+        "mean_temperature_c": 28.0,
+        "season": "summer",
+        "intensity": "semi-intensive",
+        "mean_do_mg_l": 7.5,
+        "min_do_mg_l": 5.0,
+        "mean_ph": 7.5,
+        "min_ph": 6.8,
+        "max_temp_c": 32.0,
+        "min_temp_c": 24.0,
     }
-    # Strip sklearn prefix if present
-    clean = raw.replace("num__", "").replace("cat__", "")
-    return mapping.get(clean, clean.replace("_", " "))
-
-def _explain_te(prediction: dict, params: dict) -> str:
-    """Telugu placeholder — returns English with a note."""
-    en = explain(prediction, params, lang="en")
-    return f"[Telugu translation pending]
-
-{en}"
+    test_result = {
+        "point_estimate_kg": 1500.0,
+        "lower_bound_kg": 1200.0,
+        "upper_bound_kg": 1800.0,
+        "top_factors": [
+            {"feature": "stocking_count", "importance": 0.35},
+            {"feature": "culture_days", "importance": 0.25},
+            {"feature": "mean_do_mg_l", "importance": 0.15},
+        ],
+    }
+    print(generate_explanation(test_params, test_result))

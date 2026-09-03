@@ -17,3 +17,5 @@ passlib[bcrypt]
 python-multipart
 sqlalchemy
 python-dotenv
+fastapi
+uvicorn[standard]

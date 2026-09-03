@@ -1,234 +1,362 @@
-"""APF V1+ — FastAPI backend with auth, chat, upload, graceful model loading."""
-import json, pickle, shutil, sys, os
+"""APF V1 -- FastAPI prediction and extraction backend (M3).
+
+Endpoints:
+  GET  /health              -> health check
+  POST /predict             -> structured params -> prediction + interval
+  POST /predict/extract     -> free text -> extraction -> prediction
+  POST /predict/structured  -> alias for /predict
+
+Run:  uvicorn src.api.main:app --reload --port 8000
+"""
+import json
+import pickle
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Request
-from fastapi.responses import RedirectResponse, FileResponse
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
-
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from features.build_features import build_features
-from db import get_db, get_or_create_user, save_message, get_chat_history, save_upload, User
-from auth import oauth, create_access_token, get_current_user, get_current_user_optional, FRONTEND_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 
-ARTIFACT_DIR = PROJECT_ROOT / "src" / "models" / "artifacts"
-MODEL = None
-INTERVAL = {"half_width": 500.0, "coverage": 0.90, "fitted_on": "mock"}
-MODEL_LOADED = False
-EXPECTED_FEATURES = []
+# ------------------------------------------------------------------
+# Load model artifacts (fail fast at import time if missing)
+# ------------------------------------------------------------------
+ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "models" / "artifacts"
 
-try:
-    with open(ARTIFACT_DIR / "model.pkl", "rb") as f:
-        MODEL = pickle.load(f)
-    with open(ARTIFACT_DIR / "interval.json", "r") as f:
-        INTERVAL = json.load(f)
-    EXPECTED_FEATURES = list(MODEL.named_steps["pre"].get_feature_names_out())
-    MODEL_LOADED = True
-    print("[API] Model loaded successfully.")
-except Exception as e:
-    print(f"[API] WARNING: Could not load model — {e}")
+MODEL_PATH = ARTIFACTS_DIR / "model.pkl"
+INTERVAL_PATH = ARTIFACTS_DIR / "interval.json"
+METRICS_PATH = ARTIFACTS_DIR / "metrics.json"
 
-app = FastAPI(title="APF V1+ — Aquaculture Production Forecasting")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+if not MODEL_PATH.exists():
+    raise RuntimeError(f"Model artifact not found: {MODEL_PATH}. Run src/models/train_baseline.py first.")
+if not INTERVAL_PATH.exists():
+    raise RuntimeError(f"Interval artifact not found: {INTERVAL_PATH}. Run src/models/train_baseline.py first.")
 
-class StructuredInput(BaseModel):
-    pond_area_ha: float = Field(..., gt=0)
-    stocking_count: int = Field(..., gt=0)
-    initial_weight_g: float = Field(..., gt=0)
-    culture_days: int = Field(..., gt=0)
-    mean_temperature_c: float = Field(...)
-    season: str = Field(..., pattern="^(summer|winter|monsoon)$")
-    intensity: str = Field(..., pattern="^(extensive|semi-intensive|intensive)$")
-    feed_protein_pct: int = Field(..., ge=20, le=50)
-    mean_do_mg_l: float = Field(..., gt=0)
-    min_do_mg_l: float = Field(..., gt=0)
-    mean_ph: float = Field(..., gt=4, lt=11)
-    min_ph: float = Field(..., gt=4, lt=11)
-    max_temp_c: float = Field(...)
-    min_temp_c: float = Field(...)
+with open(MODEL_PATH, "rb") as f:
+    MODEL = pickle.load(f)
 
-class PredictionOutput(BaseModel):
+with open(INTERVAL_PATH, "r") as f:
+    INTERVAL = json.load(f)
+
+with open(METRICS_PATH, "r") as f:
+    METRICS = json.load(f)
+
+# ------------------------------------------------------------------
+# FastAPI app
+# ------------------------------------------------------------------
+app = FastAPI(
+    title="AquaPredict API",
+    description="Nile Tilapia production forecasting backend",
+    version="1.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ------------------------------------------------------------------
+# Pydantic models
+# ------------------------------------------------------------------
+class PondParameters(BaseModel):
+    pond_area_ha: float = Field(..., gt=0, le=10, description="Pond area in hectares")
+    stocking_count: int = Field(..., gt=0, le=100000, description="Number of fingerlings stocked")
+    initial_weight_g: float = Field(..., gt=0, le=200, description="Average initial weight in grams")
+    culture_days: int = Field(..., ge=60, le=365, description="Expected culture duration in days")
+    mean_temperature_c: float = Field(..., ge=15, le=40, description="Mean water temperature (C)")
+    season: str = Field(..., description="summer | winter | monsoon")
+    intensity: str = Field(..., description="extensive | semi-intensive | intensive")
+    feed_protein_pct: float = Field(30.0, ge=20, le=50, description="Feed protein percentage")
+    mean_do_mg_l: float = Field(..., gt=0, le=20, description="Mean dissolved oxygen (mg/L)")
+    min_do_mg_l: float = Field(..., gt=0, le=20, description="Minimum dissolved oxygen (mg/L)")
+    mean_ph: float = Field(..., ge=4, le=11, description="Mean pH")
+    min_ph: float = Field(..., ge=4, le=11, description="Minimum pH")
+    max_temp_c: float = Field(..., ge=15, le=45, description="Maximum temperature (C)")
+    min_temp_c: float = Field(..., ge=10, le=40, description="Minimum temperature (C)")
+
+class PredictionResponse(BaseModel):
+    status: str
     point_estimate_kg: float
     lower_bound_kg: float
     upper_bound_kg: float
-    interval_coverage: float
-    top_factors: list[dict]
+    confidence_level: float
     model_version: str
     dataset_version: str
+    top_factors: list
+    explanation: str
 
-class ChatMessageIn(BaseModel):
-    role: str
-    content: str
-    prediction_json: Optional[str] = None
+class TextExtractRequest(BaseModel):
+    farmer_text: str = Field(..., min_length=3, max_length=2000, description="Free-text pond description")
 
-def _predict_from_df(df: pd.DataFrame) -> dict:
-    if not MODEL_LOADED:
-        area = df["pond_area_ha"].iloc[0]
-        count = df["stocking_count"].iloc[0]
-        days = df["culture_days"].iloc[0]
-        mock_yield = area * count * 0.0012 * (days / 120) * np.random.uniform(0.9, 1.1)
-        return {
-            "point_estimate_kg": round(mock_yield, 1),
-            "lower_bound_kg": round(mock_yield * 0.8, 1),
-            "upper_bound_kg": round(mock_yield * 1.2, 1),
-            "interval_coverage": 0.90,
-            "top_factors": [
-                {"feature": "pond_area_ha", "impact_kg": round(mock_yield * 0.3, 2)},
-                {"feature": "stocking_count", "impact_kg": round(mock_yield * 0.25, 2)},
-                {"feature": "culture_days", "impact_kg": round(mock_yield * 0.15, 2)},
-            ],
-            "model_version": "v1.1.0-baseline (MOCK — train model for real predictions)",
-            "dataset_version": "synthetic-v1.1.0",
-        }
+class HealthResponse(BaseModel):
+    status: str
+    model_loaded: bool
+    model_version: str
+    dataset_version: str
+    timestamp: str
+
+# ------------------------------------------------------------------
+# Helper: build a single-row DataFrame from params, run prediction
+# ------------------------------------------------------------------
+def _predict_from_params(params: dict) -> dict:
+    """Run the trained model on structured parameters."""
+    df = pd.DataFrame([params])
     X, _ = build_features(df)
-    pred = float(MODEL.predict(X)[0])
-    hw = INTERVAL["half_width"]
-    base_pred = pred
-    importances = []
-    for col in X.columns:
-        if col in ["season", "intensity"]:
-            continue
-        X_pert = X.copy()
-        X_pert[col] = X_pert[col].median()
-        pert_pred = float(MODEL.predict(X_pert)[0])
-        importances.append({"feature": col, "impact_kg": round(base_pred - pert_pred, 2)})
-    importances.sort(key=lambda x: abs(x["impact_kg"]), reverse=True)
+
+    # Predict
+    pred_kg = float(MODEL.predict(X)[0])
+
+    # Interval
+    half_width = INTERVAL.get("half_width", 134.0)
+    lower = max(0.0, pred_kg - half_width)
+    upper = pred_kg + half_width
+
+    # Feature importance for top factors
+    model_step = MODEL.named_steps["model"]
+    feat_names = MODEL.named_steps["pre"].get_feature_names_out()
+    importances = model_step.feature_importances_
+    top_idx = np.argsort(importances)[-5:][::-1]
+    top_factors = [
+        {"feature": feat_names[i], "importance": float(importances[i])}
+        for i in top_idx
+    ]
+
     return {
-        "point_estimate_kg": round(pred, 1),
-        "lower_bound_kg": round(max(pred - hw, 0), 1),
-        "upper_bound_kg": round(pred + hw, 1),
-        "interval_coverage": INTERVAL["coverage"],
-        "top_factors": importances[:5],
-        "model_version": "v1.1.0-baseline",
-        "dataset_version": INTERVAL.get("fitted_on", "unknown"),
+        "point_estimate_kg": round(pred_kg, 1),
+        "lower_bound_kg": round(lower, 1),
+        "upper_bound_kg": round(upper, 1),
+        "confidence_level": INTERVAL.get("coverage", 0.90),
+        "top_factors": top_factors,
     }
 
-@app.get("/health")
+# ------------------------------------------------------------------
+# Endpoints
+# ------------------------------------------------------------------
+@app.get("/health", response_model=HealthResponse)
 def health():
-    return {"status": "ok", "model_loaded": MODEL_LOADED, "interval_loaded": MODEL_LOADED}
+    return HealthResponse(
+        status="ok",
+        model_loaded=True,
+        model_version=METRICS.get("model_version", "unknown"),
+        dataset_version=METRICS.get("dataset_version", "unknown"),
+        timestamp=datetime.utcnow().isoformat(),
+    )
 
-@app.post("/predict", response_model=PredictionOutput)
-def predict_structured(payload: StructuredInput):
-    df = pd.DataFrame([payload.model_dump()])
-    return _predict_from_df(df)
+@app.post("/predict", response_model=PredictionResponse)
+def predict(params: PondParameters):
+    try:
+        result = _predict_from_params(params.model_dump())
+
+        # Simple explanation (placeholder for LLM explanation layer)
+        explanation = _generate_explanation(params.model_dump(), result)
+
+        return PredictionResponse(
+            status="complete",
+            point_estimate_kg=result["point_estimate_kg"],
+            lower_bound_kg=result["lower_bound_kg"],
+            upper_bound_kg=result["upper_bound_kg"],
+            confidence_level=result["confidence_level"],
+            model_version=METRICS.get("model_version", "unknown"),
+            dataset_version=METRICS.get("dataset_version", "unknown"),
+            top_factors=result["top_factors"],
+            explanation=explanation,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/predict/structured", response_model=PredictionResponse)
+def predict_structured(params: PondParameters):
+    """Alias for /predict."""
+    return predict(params)
 
 @app.post("/predict/extract")
-def predict_from_text(farmer_text: str):
-    from nlp.extract import extract_farmer_input
-    extracted = extract_farmer_input(farmer_text)
-    if extracted.get("missing_fields"):
-        field_labels = {
-            "pond_area_ha": "pond area in hectares", "stocking_count": "number of fingerlings stocked",
-            "initial_weight_g": "initial weight in grams", "culture_days": "culture duration in days",
-            "mean_temperature_c": "average water temperature", "season": "season",
-            "intensity": "farming intensity", "feed_protein_pct": "feed protein percentage",
-            "mean_do_mg_l": "average dissolved oxygen", "min_do_mg_l": "minimum dissolved oxygen",
-            "mean_ph": "average pH", "min_ph": "minimum pH", "max_temp_c": "maximum temperature", "min_temp_c": "minimum temperature",
-        }
-        labels = [field_labels.get(f, f) for f in extracted["missing_fields"]]
-        if len(labels) == 1:
-            followup = f"Could you also tell me the {labels[0]}?"
-        else:
-            followup = "Could you also tell me: " + ", ".join(labels[:-1]) + f", and {labels[-1]}?"
+def predict_extract(request: TextExtractRequest):
+    """
+    Extract structured parameters from free text, then predict.
+
+    For V1, this uses a simple rule-based extractor.
+    In V2+, this should call an LLM for robust extraction.
+    """
+    text = request.farmer_text.lower()
+
+    # Simple keyword-based extraction (placeholder for LLM)
+    extracted = _extract_params_from_text(text)
+
+    # Check for missing required fields
+    required = ["pond_area_ha", "stocking_count", "culture_days", "mean_temperature_c"]
+    missing = [f for f in required if f not in extracted or extracted[f] is None]
+
+    if missing:
         return {
             "status": "incomplete",
-            "missing_fields": extracted["missing_fields"],
-            "extracted_so_far": extracted["structured"],
-            "follow_up_question": followup,
+            "missing_fields": missing,
+            "follow_up_question": _generate_followup(missing),
+            "extracted": extracted,
         }
-    df = pd.DataFrame([extracted["structured"]])
-    prediction = _predict_from_df(df)
+
+    # Fill defaults for optional fields
+    defaults = {
+        "initial_weight_g": 15.0,
+        "season": "summer",
+        "intensity": "semi-intensive",
+        "feed_protein_pct": 30.0,
+        "mean_do_mg_l": 7.5,
+        "min_do_mg_l": 5.0,
+        "mean_ph": 7.5,
+        "min_ph": 6.8,
+        "max_temp_c": 32.0,
+        "min_temp_c": 24.0,
+    }
+    for k, v in defaults.items():
+        if k not in extracted or extracted[k] is None:
+            extracted[k] = v
+
+    # Run prediction
+    result = _predict_from_params(extracted)
+    explanation = _generate_explanation(extracted, result)
+
+    return {
+        "status": "complete",
+        "prediction": {
+            "point_estimate_kg": result["point_estimate_kg"],
+            "lower_bound_kg": result["lower_bound_kg"],
+            "upper_bound_kg": result["upper_bound_kg"],
+            "confidence_level": result["confidence_level"],
+            "top_factors": result["top_factors"],
+        },
+        "explanation": explanation,
+        "extracted": extracted,
+    }
+
+# ------------------------------------------------------------------
+# Simple rule-based text extractor (placeholder for LLM)
+# ------------------------------------------------------------------
+def _extract_params_from_text(text: str) -> dict:
+    import re
+    extracted = {}
+
+    # Pond area
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:ha|hectare|hectares|acre|acres)', text)
+    if m:
+        val = float(m.group(1))
+        if 'acre' in text:
+            val *= 0.4047  # acres to hectares
+        extracted["pond_area_ha"] = round(val, 2)
+
+    # Stocking count
+    m = re.search(r'(\d+(?:,\d+)*)\s*(?:fish|fingerlings|stocked|stocking)', text)
+    if m:
+        extracted["stocking_count"] = int(m.group(1).replace(',', ''))
+
+    # Culture days
+    m = re.search(r'(\d+)\s*(?:day|days|week|weeks|month|months)', text)
+    if m:
+        val = int(m.group(1))
+        if 'week' in text:
+            val *= 7
+        elif 'month' in text:
+            val *= 30
+        extracted["culture_days"] = val
+
+    # Temperature
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:\u00b0c|\u00b0c|c|degrees?)', text)
+    if m:
+        extracted["mean_temperature_c"] = float(m.group(1))
+
+    # DO
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:mg/l|mg\s*/\s*l|do|dissolved\s*oxygen)', text)
+    if m:
+        extracted["mean_do_mg_l"] = float(m.group(1))
+
+    # pH
+    m = re.search(r'ph\s*(?:is|of|=)?\s*(\d+(?:\.\d+)?)', text)
+    if m:
+        extracted["mean_ph"] = float(m.group(1))
+
+    # Initial weight
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:g|grams?)', text)
+    if m:
+        val = float(m.group(1))
+        if val < 5:  # likely kg, convert to g
+            val *= 1000
+        extracted["initial_weight_g"] = val
+
+    # Season
+    for s in ["summer", "winter", "monsoon"]:
+        if s in text:
+            extracted["season"] = s
+            break
+
+    # Intensity
+    for i in ["extensive", "semi-intensive", "intensive"]:
+        if i in text:
+            extracted["intensity"] = i
+            break
+
+    # Derive min values from means if not provided
+    if "mean_do_mg_l" in extracted and "min_do_mg_l" not in extracted:
+        extracted["min_do_mg_l"] = extracted["mean_do_mg_l"] - 1.5
+    if "mean_ph" in extracted and "min_ph" not in extracted:
+        extracted["min_ph"] = extracted["mean_ph"] - 0.3
+    if "mean_temperature_c" in extracted:
+        if "max_temp_c" not in extracted:
+            extracted["max_temp_c"] = extracted["mean_temperature_c"] + 3
+        if "min_temp_c" not in extracted:
+            extracted["min_temp_c"] = extracted["mean_temperature_c"] - 3
+
+    return extracted
+
+def _generate_followup(missing_fields: list) -> str:
+    """Generate a natural follow-up question for missing fields."""
+    field_names = {
+        "pond_area_ha": "pond area",
+        "stocking_count": "number of fish stocked",
+        "culture_days": "culture duration",
+        "mean_temperature_c": "water temperature",
+    }
+    names = [field_names.get(f, f) for f in missing_fields]
+    if len(names) == 1:
+        return f"I need your {names[0]} to make a forecast. Could you provide that?"
+    return f"I need a few more details: {', '.join(names)}. Could you provide these?"
+
+def _generate_explanation(params: dict, result: dict) -> str:
+    """Generate a simple explanation of the prediction."""
+    pe = result["point_estimate_kg"]
+    lb = result["lower_bound_kg"]
+    ub = result["upper_bound_kg"]
+    area = params.get("pond_area_ha", 0.5)
+    density = params.get("stocking_count", 3000) / area if area > 0 else 0
+
     explanation = (
-        f"Based on your inputs, the model expects a harvest of approximately "
-        f"{prediction['point_estimate_kg']:.0f} kg "
-        f"(range: {prediction['lower_bound_kg']:.0f}–{prediction['upper_bound_kg']:.0f} kg). "
-        f"The biggest driver is **{prediction['top_factors'][0]['feature']}**. "
-        f"Water quality and stocking density are the next most important factors."
+        f"Based on your pond parameters, I estimate a harvest of **{pe:.0f} kg** "
+        f"({lb:.0f}--{ub:.0f} kg at 90% confidence). "
+        f"With {params.get('stocking_count', 0):,} fish in {area:.1f} ha "
+        f"(density ~{density:,.0f} fish/ha) over {params.get('culture_days', 0)} days, "
+        f"this yield is consistent with {params.get('intensity', 'semi-intensive')} "
+        f"Nile tilapia culture under {params.get('mean_temperature_c', 28)}C conditions."
     )
-    return {"status": "complete", "extracted": extracted["structured"], "prediction": prediction, "explanation": explanation}
 
-@app.get("/auth/login")
-async def auth_login(request: Request):
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        raise HTTPException(status_code=500, detail="Google OAuth credentials not configured.")
-    redirect_uri = str(request.url_for("auth_callback"))
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+    # Add water quality commentary
+    do = params.get("mean_do_mg_l", 7.5)
+    temp = params.get("mean_temperature_c", 28)
+    if do < 4:
+        explanation += " Note: Your DO levels are low -- consider aeration to avoid mortality."
+    elif temp > 32:
+        explanation += " Note: High temperatures increase stress risk -- monitor DO closely."
 
-@app.get("/auth/callback")
-async def auth_callback(request: Request, db: Session = Depends(get_db)):
-    try:
-        token = await oauth.google.authorize_access_token(request)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"OAuth callback failed: {e}")
-    user_info = token.get("userinfo")
-    if not user_info:
-        raise HTTPException(status_code=400, detail="No userinfo in OAuth token")
-    db_user = get_or_create_user(db, user_info["sub"], user_info.get("email", ""), user_info.get("name", ""), user_info.get("picture", ""))
-    jwt_token = create_access_token({
-        "sub": str(db_user.id), "google_id": user_info["sub"],
-        "email": user_info.get("email", ""), "name": user_info.get("name", ""), "picture": user_info.get("picture", ""),
-    })
-    return RedirectResponse(url=f"{FRONTEND_URL}?token={jwt_token}")
+    return explanation
 
-@app.get("/auth/me")
-def auth_me(user: dict = Depends(get_current_user)):
-    return user
-
-@app.get("/chat/history")
-def chat_history(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    msgs = get_chat_history(db, int(user["sub"]))
-    return [{"id": m.id, "role": m.role, "content": m.content, "prediction_json": m.prediction_json, "created_at": m.created_at.isoformat() if m.created_at else None} for m in msgs]
-
-@app.post("/chat/send")
-def chat_send(msg: ChatMessageIn, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    save_message(db, int(user["sub"]), msg.role, msg.content, msg.prediction_json)
-    return {"status": "saved"}
-
-@app.post("/upload")
-def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    user_id = int(user["sub"])
-    user_dir = UPLOAD_DIR / str(user_id)
-    user_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(file.filename).name
-    file_path = user_dir / safe_name
-    counter = 1
-    stem = file_path.stem
-    suffix = file_path.suffix
-    while file_path.exists():
-        file_path = user_dir / f"{stem}_{counter}{suffix}"
-        counter += 1
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-    file_type = "other"
-    if suffix.lower() in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
-        file_type = "image"
-    elif suffix.lower() in [".wav", ".mp3", ".m4a", ".ogg", ".flac"]:
-        file_type = "audio"
-    elif suffix.lower() in [".csv", ".xlsx", ".xls"]:
-        file_type = "csv"
-    elif suffix.lower() == ".pdf":
-        file_type = "pdf"
-    save_upload(db, user_id, safe_name, str(file_path), file_type)
-    return {"filename": safe_name, "file_type": file_type}
-
-@app.get("/uploads/{user_id}/{filename}")
-def serve_upload(user_id: int, filename: str, user: dict = Depends(get_current_user)):
-    if int(user["sub"]) != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    file_path = UPLOAD_DIR / str(user_id) / filename
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path)
-
+# ------------------------------------------------------------------
+# Run with: uvicorn src.api.main:app --reload --port 8000
+# ------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
