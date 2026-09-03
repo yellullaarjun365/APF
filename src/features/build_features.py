@@ -9,7 +9,7 @@ TARGET = "total_yield_kg"
 # Dropped: all outcome variables that a farmer does not know on day one
 DROP_COLS = [
     "total_yield_kg", "yield_kg_per_ha", "final_survival_count",
-    "final_weight_g", "fcr_effective", "total_feed_kg",
+    "final_weight_g", "fcr_effective", "total_feed_kg", "survival_rate",
     "dataset_version", "generated_at"
 ]
 
