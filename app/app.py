@@ -422,6 +422,7 @@ def init_state():
             "mean_do_mg_l": 7.5, "min_do_mg_l": 5.0, "mean_ph": 7.5,
             "min_ph": 6.8, "max_temp_c": 32.0, "min_temp_c": 24.0,
         },
+        "chat_known_fields": {},
         "analyzing": False,
         "show_suggestions": True,
         "show_attach": False,
@@ -460,6 +461,10 @@ def _api_predict_structured(params: dict) -> dict:
 
 def _api_predict_text(text: str) -> dict:
     return _api_post("/predict/extract", {"farmer_text": text})
+
+def _api_chat(text: str, known_fields: dict, history: list) -> dict:
+    trimmed = [{"role": h["role"], "content": h["content"]} for h in history[-6:]]
+    return _api_post("/chat", {"farmer_text": text, "known_fields": known_fields, "history": trimmed})
 
 def _api_health() -> dict:
     try:
@@ -800,37 +805,42 @@ def render_chat_assistant():
                 break
 
         if last_user_msg:
-            result = _api_predict_text(last_user_msg)
-            if result.get("status") == "incomplete":
-                missing = result.get("missing_fields", [])
-                followup = result.get("follow_up_question", "Could you provide more details?")
-                resp = followup + "\n\nMissing: " + ", ".join(missing)
-                st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
-            elif result.get("status") == "complete":
-                pred_data = result.get("prediction", {})
-                extracted_data = result.get("extracted", {})
-                st.session_state.last_prediction = pred_data
-                st.session_state.pond_params.update(extracted_data)
-                explanation = result.get("explanation", "")
-                resp = "Here is your production forecast based on the pond details you provided."
-                if explanation:
-                    resp += f"\n\n{explanation}"
-                st.session_state.chat_history.append({
-                    "role": "assistant", "content": resp, "time": "",
-                    "prediction": pred_data, "extracted": extracted_data,
-                })
-                _log_extraction(
-                    raw_text=last_user_msg,
-                    extracted=extracted_data,
-                    prediction=pred_data,
-                    username=st.session_state.get("username", ""),
-                )
-            elif "error" in result:
+            result = _api_chat(last_user_msg, st.session_state.chat_known_fields, st.session_state.chat_history)
+            if "error" in result:
                 resp = "Sorry, I couldn't reach the forecasting engine: " + str(result["error"]) + "\n\n(Is the API running? `uvicorn src.api.main:app --reload --port 8000`)"
                 st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
             else:
-                resp = "I'm not sure how to process that. Try describing your pond with area, stocking count, culture days, temperature, DO, and pH."
-                st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
+                st.session_state.chat_known_fields = result.get("known_fields", st.session_state.chat_known_fields)
+                if result.get("status") == "chat":
+                    resp = result.get("reply", "How can I help?")
+                    st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
+                elif result.get("status") == "need_more":
+                    missing = result.get("missing_fields", [])
+                    followup = result.get("follow_up_question", "Could you provide more details?")
+                    resp = followup + "\n\nMissing: " + ", ".join(missing)
+                    st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
+                elif result.get("status") == "predicted":
+                    pred_data = result.get("prediction", {})
+                    extracted_data = result.get("known_fields", {})
+                    st.session_state.last_prediction = pred_data
+                    st.session_state.pond_params.update(extracted_data)
+                    explanation = result.get("explanation", "")
+                    resp = "Here is your production forecast based on the pond details you provided."
+                    if explanation:
+                        resp += f"\n\n{explanation}"
+                    st.session_state.chat_history.append({
+                        "role": "assistant", "content": resp, "time": "",
+                        "prediction": pred_data, "extracted": extracted_data,
+                    })
+                    _log_extraction(
+                        raw_text=last_user_msg,
+                        extracted=extracted_data,
+                        prediction=pred_data,
+                        username=st.session_state.get("username", ""),
+                    )
+                else:
+                    resp = "I'm not sure how to process that. Try describing your pond with area, stocking count, culture days, temperature, DO, and pH."
+                    st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
 
         st.session_state.analyzing = False
         st.rerun()

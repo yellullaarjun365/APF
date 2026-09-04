@@ -101,6 +101,7 @@ class TextExtractRequest(BaseModel):
 class ChatRequest(BaseModel):
     farmer_text: str = Field(..., min_length=1, max_length=2000, description="Free-text chat message")
     known_fields: dict = Field(default_factory=dict, description="Fields accumulated from earlier turns")
+    history: list = Field(default_factory=list, description="Last few {role, content} turns, most recent last")
 
 class HealthResponse(BaseModel):
     status: str
@@ -274,6 +275,52 @@ def _classify_intent(text: str) -> str:
     return "pond_data"
 
 
+FIELD_LABELS_AND_WHY = {
+    "pond_area_ha": ("pond area (hectares)", "it sets the stocking density and total biomass the pond can realistically support"),
+    "stocking_count": ("number of fish stocked", "total fish count is the single biggest driver of total harvest weight"),
+    "culture_days": ("culture duration (days)", "longer culture periods mean more growth time, directly changing expected harvest size"),
+    "mean_temperature_c": ("water temperature", "tilapia growth rate is highly temperature-dependent -- too cold or too hot slows growth or raises stress"),
+}
+
+
+def _generate_dynamic_followup(missing_fields: list, known_fields: dict, history: list) -> str:
+    """Ask Ollama to naturally acknowledge known fields, ask for missing
+    ones with a brief reason why each matters, and respond sensibly if
+    the farmer's last message was a question (e.g. "why do you need
+    that") rather than new data. Falls back to the static template on
+    any Ollama failure."""
+    known_str = ", ".join(f"{k}={v}" for k, v in known_fields.items()) or "none yet"
+    missing_info = "; ".join(
+        f"{FIELD_LABELS_AND_WHY.get(f, (f, 'it affects the forecast'))[0]} (needed because {FIELD_LABELS_AND_WHY.get(f, (f, 'it affects the forecast'))[1]})"
+        for f in missing_fields
+    )
+    history_lines = "\n".join(f"{h.get('role', '?')}: {h.get('content', '')}" for h in (history or [])[-6:])
+
+    prompt = f"""You are a friendly assistant helping a farmer provide pond details for a Nile tilapia harvest forecast.
+
+Recent conversation:
+{history_lines}
+
+Already known: {known_str}
+Still missing: {missing_info}
+
+Write a short, natural reply (2-4 sentences). Briefly acknowledge what's already known, then ask for the missing field(s), explaining briefly why each matters. If the farmer's last message was a question (e.g. asking why something is needed) rather than new pond data, answer that question directly and warmly instead of just repeating the request. Do not invent field values. Do not use markdown formatting -- plain sentences only."""
+
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "keep_alive": "30m"},
+            timeout=OLLAMA_TIMEOUT_S,
+        )
+        resp.raise_for_status()
+        out = resp.json().get("response", "").strip()
+        if out:
+            return out
+    except Exception as e:
+        print(f"[chat] dynamic followup failed, using static fallback: {e}")
+    return _generate_followup(missing_fields)
+
+
 @app.post("/chat")
 def chat(request: ChatRequest):
     """Dynamic multi-turn chat endpoint (V1-M5). Classifies intent, merges
@@ -282,6 +329,7 @@ def chat(request: ChatRequest):
     asks for a prediction (whichever comes first)."""
     text = request.farmer_text.lower()
     known_fields = dict(request.known_fields or {})
+    history = request.history or []
 
     intent = _classify_intent(text)
 
@@ -303,7 +351,7 @@ def chat(request: ChatRequest):
             "status": "need_more",
             "known_fields": known_fields,
             "missing_fields": missing,
-            "follow_up_question": _generate_followup(missing),
+            "follow_up_question": _generate_dynamic_followup(missing, known_fields, history),
         }
 
     defaults = {
