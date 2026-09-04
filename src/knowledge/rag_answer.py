@@ -1,4 +1,4 @@
-﻿"""APF -- RAG answer generation (V3, part 3).
+"""APF -- RAG answer generation (V3, part 3).
 
 Takes a farmer's aquaculture question, retrieves relevant chunks, and asks
 Ollama to answer ONLY from those chunks -- same "translate, don't invent"
@@ -8,7 +8,7 @@ Ollama free-associate.
 """
 import os
 import requests
-from src.knowledge.retrieve import retrieve
+from knowledge.retrieve import retrieve
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")

@@ -674,6 +674,12 @@ def render_chat_assistant():
                 f'</div>',
                 unsafe_allow_html=True,
             )
+            images = msg.get("images") or []
+            if images:
+                img_cols = st.columns(len(images))
+                for col, img in zip(img_cols, images):
+                    with col:
+                        st.image(img["url"], caption=img.get("title", ""), use_container_width=True)
         else:
             st.markdown(
                 f'<div class="msg-user">'
@@ -819,7 +825,10 @@ def render_chat_assistant():
                     sources = result.get("sources", [])
                     if sources:
                         resp += "\n\n_Source: " + ", ".join(sources) + "_"
-                    st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
+                    st.session_state.chat_history.append({
+                        "role": "assistant", "content": resp, "time": "",
+                        "images": result.get("images", []),
+                    })
                 elif result.get("status") == "need_more":
                     missing = result.get("missing_fields", [])
                     followup = result.get("follow_up_question", "Could you provide more details?")

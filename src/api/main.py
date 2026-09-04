@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from features.build_features import build_features
 from explain.llm_explain import generate_explanation, OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT_S
 from knowledge.rag_answer import answer_knowledge_question
+from knowledge.species_images import extract_species_name, get_species_images
 import requests
 
 # ------------------------------------------------------------------
@@ -353,10 +354,15 @@ def chat(request: ChatRequest):
 
     if intent == "knowledge_question":
         rag_result = answer_knowledge_question(request.farmer_text)
+        images = []
+        species_name = extract_species_name(request.farmer_text)
+        if species_name:
+            images = get_species_images(species_name)
         return {
             "status": "knowledge_answer",
             "reply": rag_result["answer"],
             "sources": rag_result["sources"],
+            "images": images,
             "known_fields": known_fields,
         }
 
