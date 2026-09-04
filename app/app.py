@@ -21,6 +21,14 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 API_BASE = os.environ.get("APF_API_URL", "http://localhost:8000")
 
+# ==================================================================
+# Temporary storage for anything the user uploads via chat.
+# Not committed to git (see .gitignore note in the deployment steps) --
+# this is scratch space, not a permanent data store.
+# ==================================================================
+UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
 st.set_page_config(
     page_title="AquaPredict AI -- Smarter Aquaculture",
     page_icon="\U0001F41F",
@@ -38,7 +46,7 @@ if _BG_B64:
     _bg_css = f"""
     [data-testid="stAppViewContainer"] {{
         background:
-            linear-gradient(rgba(6,10,16,0.86), rgba(6,10,16,0.90)),
+            linear-gradient(rgba(6,10,16,0.45), rgba(6,10,16,0.55)),
             url('data:image/jpeg;base64,{_BG_B64}') no-repeat center center fixed;
         background-size: cover;
     }}
@@ -110,7 +118,7 @@ st.markdown(f"""
         color: white; font-size: 13px; flex-shrink: 0; margin-top: 4px;
     }}
     .msg-assistant-body {{
-        background: rgba(22, 24, 31, 0.55);
+        background: rgba(15, 17, 23, 0.78);
         border-radius: 14px;
         padding: 12px 16px;
         color: #e2e8f0;
@@ -125,7 +133,7 @@ st.markdown(f"""
         margin-bottom: 24px;
     }}
     .msg-user-body {{
-        background: #1e212b;
+        background: rgba(30, 33, 43, 0.9);
         border: 1px solid #2a2d3a;
         border-radius: 18px 18px 4px 18px;
         padding: 12px 18px;
@@ -186,6 +194,25 @@ st.markdown(f"""
         border-color: #0d9488 !important;
         box-shadow: 0 0 0 1px #0d9488 !important;
     }}
+    div[data-testid="stForm"] {{ border: none !important; padding: 0 !important; }}
+
+    /* Compact file-attach control -- shrink Streamlit's default drag-drop
+       box down to something that reads as an "attach" row, not a whole
+       upload panel. */
+    div[data-testid="stFileUploader"] {{
+        background: #1a1d26;
+        border: 1px dashed #2a2d3a;
+        border-radius: 14px;
+        padding: 6px 10px;
+        margin-bottom: 8px;
+    }}
+    div[data-testid="stFileUploaderDropzone"] {{
+        background: transparent !important;
+        padding: 4px !important;
+        min-height: 0 !important;
+    }}
+    div[data-testid="stFileUploaderDropzoneInstructions"] span {{ font-size: 12px !important; }}
+    div[data-testid="stFileUploaderDropzoneInstructions"] small {{ font-size: 10px !important; }}
 
     /* Section labels */
     .section-label {{
@@ -404,9 +431,10 @@ def render_chat_assistant():
 
     # ---- FIXED BOTTOM INPUT BAR ----
     st.markdown('<div class="input-bar-fixed"><div class="input-bar-inner">', unsafe_allow_html=True)
-    input_row = st.columns([0.6, 5.4, 0.6])
 
-    with input_row[0]:
+    outer = st.columns([0.6, 5.4])
+
+    with outer[0]:
         if st.button("\U0001F3A4", key="btn_voice", help="Click, then speak (Chrome/Edge only -- Brave blocks this by default)"):
             st.components.v1.html("""
             <script>
@@ -437,20 +465,70 @@ def render_chat_assistant():
             </script>
             """, height=0)
 
-    with input_row[1]:
-        user_text = st.text_input("", placeholder="Ask AquaPredict AI...", key="chat_input", label_visibility="collapsed")
+    with outer[1]:
+        # Attach control -- compact file uploader. Whatever's picked shows
+        # as Streamlit's own filename/size chip (with a built-in remove
+        # "x") right above the text box, exactly like the reference UI,
+        # until the message is actually sent.
+        attached_file = st.file_uploader(
+            "Attach", type=["jpg", "jpeg", "png", "pdf", "csv", "wav", "mp3", "m4a"],
+            key="chat_attachment", label_visibility="collapsed",
+            accept_multiple_files=False,
+        )
 
-    with input_row[2]:
-        send_clicked = st.button("\u27A4", key="btn_send")
+        # st.form gives us two things we didn't have before: pressing
+        # Enter submits (not just clicking the arrow), and clear_on_submit
+        # empties the text box + attachment automatically after sending --
+        # this is what was making "send" feel broken (it worked, but the
+        # box never cleared and Enter did nothing).
+        with st.form(key="chat_form", clear_on_submit=True):
+            form_cols = st.columns([5.4, 0.6])
+            with form_cols[0]:
+                user_text = st.text_input(
+                    "", placeholder="Ask AquaPredict AI...", key="chat_input", label_visibility="collapsed",
+                )
+            with form_cols[1]:
+                send_clicked = st.form_submit_button("\u27A4")
 
     st.markdown('</div></div>', unsafe_allow_html=True)
 
-    # Voice text only ever lands in the box above (via chat_input session
-    # state, set earlier in the script). Sending always requires this
-    # explicit click -- nothing auto-submits.
-    if send_clicked and user_text and user_text.strip():
-        _handle_user_message(user_text.strip())
-        return
+    if send_clicked and ((user_text and user_text.strip()) or attached_file is not None):
+        display_text = user_text.strip() if user_text else ""
+        saved_path = None
+        if attached_file is not None:
+            import time
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            saved_path = UPLOAD_DIR / f"{ts}_{attached_file.name}"
+            saved_path.write_bytes(attached_file.getvalue())
+            attach_note = f"\U0001F4CE {attached_file.name}"
+            display_text = f"{display_text}\n\n{attach_note}" if display_text else attach_note
+
+        st.session_state.chat_history.append({
+            "role": "user", "content": display_text, "time": "",
+            "attachment_path": str(saved_path) if saved_path else None,
+        })
+
+        if user_text and user_text.strip():
+            # There's real text -- run it through the actual pipeline.
+            st.session_state.analyzing = True
+        else:
+            # File only, no text: V1's model only understands typed pond
+            # descriptions (see PROJECT_MANUAL.md V1 scope). Say so
+            # honestly instead of pretending to analyze it.
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": (
+                    f"Saved **{attached_file.name}** to temporary storage "
+                    f"(`data/uploads/`). V1's forecasting model only reads "
+                    f"typed pond descriptions right now -- file analysis "
+                    f"(images, CSVs) is planned for V2. Feel free to "
+                    f"describe your pond in text and I'll forecast it."
+                ),
+                "time": "",
+            })
+
+        st.session_state.show_suggestions = False
+        st.rerun()
 
     # ---- REAL PIPELINE CALL: text -> /predict/extract (extraction -> model -> explanation) ----
     if st.session_state.analyzing:
