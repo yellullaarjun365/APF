@@ -6,8 +6,10 @@ Requires: app/assets/bg_base64.txt (background image, base64-encoded).
 If that file is missing, the app falls back to a plain dark background
 instead of crashing.
 """
+import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +30,33 @@ API_BASE = os.environ.get("APF_API_URL", "http://localhost:8000")
 # ==================================================================
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# ==================================================================
+# Extraction log -- one JSON line per successful text->fields extraction.
+# JSONL (one object per line) rather than a single JSON array, so a new
+# record can be appended without re-reading/re-writing the whole file.
+# Gitignored (see .gitignore) -- this grows indefinitely and is per-machine
+# data, not something that belongs in version control.
+# ==================================================================
+LOG_DIR = PROJECT_ROOT / "data" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+EXTRACTIONS_LOG = LOG_DIR / "extractions.jsonl"
+
+def _log_extraction(raw_text: str, extracted: dict, prediction: dict, username: str) -> None:
+    """Append one record for a completed extraction. Never raises -- a
+    logging failure should not break the chat for the farmer using it."""
+    record = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "username": username.strip() if username and username.strip() else "unknown",
+        "raw_text": raw_text,
+        "extracted": extracted,
+        "prediction": prediction,
+    }
+    try:
+        with open(EXTRACTIONS_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        st.warning(f"Couldn't write extraction log ({e}) -- continuing without it.")
 
 @st.cache_resource
 def _clear_uploads_on_server_start():
@@ -396,6 +425,7 @@ def init_state():
         "analyzing": False,
         "show_suggestions": True,
         "show_attach": False,
+        "username": "",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -494,6 +524,12 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+    st.markdown('<div class="section-label">Session</div>', unsafe_allow_html=True)
+    st.text_input(
+        "Your Name", key="username",
+        placeholder="e.g. Arjun", help="Tags extraction log entries only -- V1 has no real login/auth.",
+    )
+
     # ---- Temporary Storage review panel ----
     st.markdown('<div class="section-label">Temporary Storage</div>', unsafe_allow_html=True)
     uploads = sorted(UPLOAD_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True) if UPLOAD_DIR.exists() else []
@@ -530,8 +566,54 @@ with st.sidebar:
 # ==================================================================
 # Helper: Format assistant response
 # ==================================================================
-def format_assistant_response(text: str, prediction: dict = None) -> str:
+# Human-readable labels for the raw field names the extraction API returns.
+# Keep this in sync with whatever fields src/nlp/ extraction can produce --
+# any field not listed here just falls back to a title-cased version of its
+# raw name, so a new field showing up doesn't silently disappear.
+EXTRACTED_FIELD_LABELS = {
+    "pond_area_ha": "Pond Area (ha)",
+    "stocking_count": "Stocking Count",
+    "initial_weight_g": "Initial Weight (g)",
+    "culture_days": "Culture Days",
+    "mean_temperature_c": "Mean Temp (\u00b0C)",
+    "min_temp_c": "Min Temp (\u00b0C)",
+    "max_temp_c": "Max Temp (\u00b0C)",
+    "season": "Season",
+    "intensity": "Intensity",
+    "feed_protein_pct": "Feed Protein (%)",
+    "mean_do_mg_l": "Mean DO (mg/L)",
+    "min_do_mg_l": "Min DO (mg/L)",
+    "mean_ph": "Mean pH",
+    "min_ph": "Min pH",
+}
+
+def format_extracted_fields(extracted: dict) -> str:
+    """Render what the extraction step understood from the farmer's text,
+    so they can see it was parsed correctly BEFORE the forecast -- this is
+    the manual's §3 'field validation' step made visible, not just internal
+    plumbing."""
+    if not extracted:
+        return ""
+    rows = ""
+    for key, val in extracted.items():
+        label = EXTRACTED_FIELD_LABELS.get(key, key.replace("_", " ").title())
+        rows += (
+            f"<div style='display:flex;justify-content:space-between;padding:4px 0;"
+            f"border-bottom:1px solid #23262f;font-size:13px;'>"
+            f"<span style='color:#94a3b8;'>{label}</span>"
+            f"<span style='color:#e2e8f0;font-weight:500;'>{val}</span></div>"
+        )
+    return f"""
+    <div class="forecast-inline" style="margin-bottom:12px;">
+        <div class="label">\U0001F4CB Understood From Your Message</div>
+        <div style="margin-top:8px;">{rows}</div>
+    </div>
+    """
+
+def format_assistant_response(text: str, prediction: dict = None, extracted: dict = None) -> str:
     html = f'<div class="msg-assistant-body">{text}</div>'
+    if extracted:
+        html += format_extracted_fields(extracted)
     if prediction:
         pe = prediction.get("point_estimate_kg", 0)
         lb = prediction.get("lower_bound_kg", 0)
@@ -578,7 +660,8 @@ def render_chat_assistant():
     for msg in st.session_state.chat_history:
         if msg["role"] == "assistant":
             pred = msg.get("prediction")
-            body_html = format_assistant_response(msg["content"], pred)
+            extracted = msg.get("extracted")
+            body_html = format_assistant_response(msg["content"], pred, extracted)
             st.markdown(f"""
             <div class="msg-assistant">
                 <div class="msg-assistant-avatar">\U0001F41F</div>
@@ -723,15 +806,23 @@ def render_chat_assistant():
                 st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
             elif result.get("status") == "complete":
                 pred_data = result.get("prediction", {})
+                extracted_data = result.get("extracted", {})
                 st.session_state.last_prediction = pred_data
-                st.session_state.pond_params.update(result.get("extracted", {}))
+                st.session_state.pond_params.update(extracted_data)
                 explanation = result.get("explanation", "")
                 resp = "Here is your production forecast based on the pond details you provided."
                 if explanation:
                     resp += f"\n\n{explanation}"
                 st.session_state.chat_history.append({
-                    "role": "assistant", "content": resp, "time": "", "prediction": pred_data,
+                    "role": "assistant", "content": resp, "time": "",
+                    "prediction": pred_data, "extracted": extracted_data,
                 })
+                _log_extraction(
+                    raw_text=last_user_msg,
+                    extracted=extracted_data,
+                    prediction=pred_data,
+                    username=st.session_state.get("username", ""),
+                )
             elif "error" in result:
                 resp = "Sorry, I couldn't reach the forecasting engine: " + str(result["error"]) + "\n\n(Is the API running? `uvicorn src.api.main:app --reload --port 8000`)"
                 st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
