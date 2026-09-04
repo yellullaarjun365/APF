@@ -22,8 +22,7 @@ from pydantic import BaseModel, Field
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from features.build_features import build_features
-from explain.llm_explain import generate_explanation
-from llm.async_client import OLLAMA_URL, OLLAMA_MODEL, TIMEOUT_S
+from explain.llm_explain import generate_explanation, OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT_S
 OLLAMA_CHAT_URL = OLLAMA_URL.replace("/api/generate", "/api/chat")
 from knowledge.rag_answer import answer_knowledge_question
 from knowledge.species_images import extract_species_name, get_species_images
@@ -171,14 +170,14 @@ def health():
     )
 
 @app.post("/predict", response_model=PredictionResponse)
-async def predict(params: PondParameters):
+def predict(params: PondParameters):
     try:
         result = _predict_from_params(params.model_dump())
 
         # LLM explanation layer (src/explain/llm_explain.py) -- translates
         # the already-computed numbers into plain language; never touches
         # the forecast itself. See PROJECT_MANUAL.md §3.
-        explanation = await generate_explanation(params.model_dump(), result)
+        explanation = generate_explanation(params.model_dump(), result)
 
         return PredictionResponse(
             status="complete",
@@ -200,7 +199,7 @@ def predict_structured(params: PondParameters):
     return predict(params)
 
 @app.post("/predict/extract")
-async def predict_extract(request: TextExtractRequest):
+def predict_extract(request: TextExtractRequest):
     """
     Extract structured parameters from free text, then predict.
 
@@ -243,7 +242,7 @@ async def predict_extract(request: TextExtractRequest):
 
     # Run prediction
     result = _predict_from_params(extracted)
-    explanation = await generate_explanation(extracted, result)
+    explanation = generate_explanation(extracted, result)
 
     return {
         "status": "complete",
@@ -368,7 +367,7 @@ Write a short, natural reply (2-4 sentences). Briefly acknowledge what's already
 
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
+def chat(request: ChatRequest):
     """Dynamic multi-turn chat endpoint (V1-M5). Classifies intent, merges
     newly-extracted fields into known_fields server-side, and predicts
     either when all required fields are known or the farmer explicitly
@@ -387,7 +386,7 @@ async def chat(request: ChatRequest):
         ), "known_fields": known_fields}
 
     if intent == "knowledge_question":
-        rag_result = await answer_knowledge_question(request.farmer_text)
+        rag_result = answer_knowledge_question(request.farmer_text)
         images = []
         species_name = extract_species_name(request.farmer_text)
         if species_name:
@@ -425,7 +424,7 @@ async def chat(request: ChatRequest):
             full_params[k] = v
 
     result = _predict_from_params(full_params)
-    explanation = await generate_explanation(full_params, result)
+    explanation = generate_explanation(full_params, result)
 
     return {
         "status": "predicted",
