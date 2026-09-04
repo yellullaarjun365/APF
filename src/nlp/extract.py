@@ -135,9 +135,16 @@ def _extract_stocking_count(text: str) -> Optional[int]:
 
 def _extract_duration(text: str) -> Optional[int]:
     """Extract culture duration in days."""
-    m = re.search(r'(\d+)\s*days?', text)
-    if m:
-        return int(m.group(1))
+    patterns = [
+        r'(\d+)\s*culture\s*days?',
+        r'(\d+)\s*days?\s*(?:of\s*)?culture',
+        r'culture\s*(?:period|duration)?\s*(?:of|is)?\s*(\d+)\s*days?',
+        r'(\d+)\s*days?',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            return int(m.group(1))
 
     m = re.search(r'(\d+)\s*weeks?', text)
     if m:
@@ -153,7 +160,8 @@ def _extract_duration(text: str) -> Optional[int]:
 def _extract_temperature(text: str) -> Optional[float]:
     """Extract water temperature in Celsius."""
     patterns = [
-        r'(\d+(?:\.\d+)?)\s*(?:\u00b0c|c|degrees?\s*c)',
+        r'(\d+(?:\.\d+)?)\s*(?:\u00b0c|degrees?\s*c)\b',
+        r'(\d+(?:\.\d+)?)\s*c(?![a-z])',
         r'temperature\s*(?:is|of|=)?\s*(\d+(?:\.\d+)?)',
         r'temp\s*(?:is|of|=)?\s*(\d+(?:\.\d+)?)',
     ]
