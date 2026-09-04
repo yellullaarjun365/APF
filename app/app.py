@@ -603,12 +603,12 @@ def format_extracted_fields(extracted: dict) -> str:
             f"<span style='color:#94a3b8;'>{label}</span>"
             f"<span style='color:#e2e8f0;font-weight:500;'>{val}</span></div>"
         )
-    return f"""
-    <div class="forecast-inline" style="margin-bottom:12px;">
-        <div class="label">\U0001F4CB Understood From Your Message</div>
-        <div style="margin-top:8px;">{rows}</div>
-    </div>
-    """
+    return (
+        f'<div class="forecast-inline" style="margin-bottom:12px;">'
+        f'<div class="label">\U0001F4CB Understood From Your Message</div>'
+        f'<div style="margin-top:8px;">{rows}</div>'
+        f'</div>'
+    )
 
 def format_assistant_response(text: str, prediction: dict = None, extracted: dict = None) -> str:
     html = f'<div class="msg-assistant-body">{text}</div>'
@@ -623,17 +623,17 @@ def format_assistant_response(text: str, prediction: dict = None, extracted: dic
         for f in factors[:4]:
             imp = f.get("importance", 0)
             factors_html += f"<li>{f['feature'].replace('_', ' ').title()}: {imp:.3f}</li>"
-        html += f"""
-        <div class="forecast-inline">
-            <div class="label">Estimated Production</div>
-            <div class="value">{pe:.1f} <span style="font-size:14px;font-weight:400;color:#94a3b8;">kg</span></div>
-            <div class="range">Range: {lb:.0f} - {ub:.0f} kg (90% CI)</div>
-            <div class="factors">
-                <strong style="color:#e2e8f0;">Top Factors:</strong>
-                <ul style="margin-top:4px;">{factors_html}</ul>
-            </div>
-        </div>
-        """
+        html += (
+            f'<div class="forecast-inline">'
+            f'<div class="label">Estimated Production</div>'
+            f'<div class="value">{pe:.1f} <span style="font-size:14px;font-weight:400;color:#94a3b8;">kg</span></div>'
+            f'<div class="range">Range: {lb:.0f} - {ub:.0f} kg (90% CI)</div>'
+            f'<div class="factors">'
+            f'<strong style="color:#e2e8f0;">Top Factors:</strong>'
+            f'<ul style="margin-top:4px;">{factors_html}</ul>'
+            f'</div>'
+            f'</div>'
+        )
     return html
 
 def _handle_user_message(text: str):
@@ -662,18 +662,20 @@ def render_chat_assistant():
             pred = msg.get("prediction")
             extracted = msg.get("extracted")
             body_html = format_assistant_response(msg["content"], pred, extracted)
-            st.markdown(f"""
-            <div class="msg-assistant">
-                <div class="msg-assistant-avatar">\U0001F41F</div>
-                <div>{body_html}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="msg-assistant">'
+                f'<div class="msg-assistant-avatar">\U0001F41F</div>'
+                f'<div>{body_html}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
         else:
-            st.markdown(f"""
-            <div class="msg-user">
-                <div class="msg-user-body">{msg["content"]}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="msg-user">'
+                f'<div class="msg-user-body">{msg["content"]}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
     if st.session_state.analyzing:
         st.markdown("""
