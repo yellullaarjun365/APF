@@ -196,50 +196,27 @@ st.markdown(f"""
     }}
     div[data-testid="stForm"] {{ border: none !important; padding: 0 !important; }}
 
-    /* Attach control -- collapse Streamlit's default drag-drop panel down
-       to a small square icon button that sits inline with mic/text/send,
-       matching the reference chat bar instead of a separate wide panel. */
+    /* Attach control -- compact, full width of its own row (revealed only
+       when the "+" toggle is clicked), styled dark instead of Streamlit's
+       default light drag-drop panel. Trying to squeeze this into a narrow
+       inline column breaks it (the native button keeps its natural width
+       and overlaps neighboring widgets), so it gets its own row instead. */
     div[data-testid="stFileUploader"] {{
         background: transparent !important;
         border: none !important;
         padding: 0 !important;
-        margin: 0 !important;
+        margin: 0 0 8px 0 !important;
     }}
     div[data-testid="stFileUploaderDropzone"] {{
         background: #1a1d26 !important;
-        border: 1px solid #2a2d3a !important;
+        border: 1px dashed #2a2d3a !important;
         border-radius: 12px !important;
-        padding: 0 !important;
-        min-height: 46px !important;
-        height: 46px !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
+        padding: 6px 10px !important;
+        min-height: 0 !important;
     }}
-    /* Hide the cloud icon, "Drag and drop files here", and the size/type
-       caption -- keep only the Browse button, and relabel it as an
-       attach icon so the whole control reads as one small square. */
-    div[data-testid="stFileUploaderDropzoneInstructions"] svg,
-    div[data-testid="stFileUploaderDropzoneInstructions"] > div > span,
-    div[data-testid="stFileUploaderDropzoneInstructions"] small {{
-        display: none !important;
-    }}
-    div[data-testid="stFileUploaderDropzoneInstructions"] {{
-        padding: 0 !important; margin: 0 !important;
-    }}
-    div[data-testid="stFileUploaderDropzone"] button {{
-        background: transparent !important;
-        border: none !important;
-        color: #94a3b8 !important;
-        font-size: 0 !important;
-        width: 100%; height: 46px;
-        padding: 0 !important;
-        display: flex; align-items: center; justify-content: center;
-    }}
-    div[data-testid="stFileUploaderDropzone"] button::after {{
-        content: "\\1F4CE";
-        font-size: 18px !important;
-    }}
+    div[data-testid="stFileUploaderDropzoneInstructions"] svg {{ width: 20px !important; height: 20px !important; }}
+    div[data-testid="stFileUploaderDropzoneInstructions"] span {{ font-size: 12px !important; }}
+    div[data-testid="stFileUploaderDropzoneInstructions"] small {{ font-size: 10px !important; }}
     /* Once a file is picked, Streamlit shows a separate file-list item
        below the dropzone (name/size chip + remove x) -- restyle that to
        match the dark theme instead of its default light card. */
@@ -344,6 +321,7 @@ def init_state():
         },
         "analyzing": False,
         "show_suggestions": True,
+        "show_attach": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -551,25 +529,10 @@ def render_chat_assistant():
         </div>
         """, unsafe_allow_html=True)
 
-    if st.session_state.show_suggestions and len(st.session_state.chat_history) == 0:
-        st.markdown("<div style='font-size:13px;color:#94a3b8;margin-bottom:12px;'>Try asking:</div>", unsafe_allow_html=True)
-        sugg_col1, sugg_col2 = st.columns(2)
-        suggestions = [
-            ("\U0001F4CA", "Forecast my production"),
-            ("\U0001F4A7", "Check water quality"),
-            ("\U0001F37D", "Feeding recommendation"),
-            ("\U0001F4C8", "Growth status"),
-        ]
-        for i, (icon, title) in enumerate(suggestions):
-            col = sugg_col1 if i < 2 else sugg_col2
-            with col:
-                if st.button(f"{icon} {title}", key=f"sugg_{i}", use_container_width=True):
-                    _handle_user_message(title)
-
     # ---- FIXED BOTTOM INPUT BAR ----
     st.markdown('<div class="input-bar-fixed"><div class="input-bar-inner">', unsafe_allow_html=True)
 
-    outer = st.columns([0.6, 5.4])
+    outer = st.columns([0.6, 0.6, 4.8])
 
     with outer[0]:
         if st.button("\U0001F3A4", key="btn_voice", help="Click, then speak (Chrome/Edge only -- Brave blocks this by default)"):
@@ -603,23 +566,28 @@ def render_chat_assistant():
             """, height=0)
 
     with outer[1]:
-        # Attach control + text box + send button are ALL inside the same
-        # form now, so clear_on_submit empties every one of them together
-        # -- and attach now sits in its own narrow column alongside text
-        # and send, in one row, instead of a full-width panel above them.
+        if st.button("\u2795", key="btn_attach_toggle", help="Attach a file"):
+            st.session_state.show_attach = not st.session_state.get("show_attach", False)
+
+    with outer[2]:
+        # Attach control (only rendered when toggled on -- its own row,
+        # full width, so nothing overlaps) + text box + send button are
+        # ALL inside the same form, so clear_on_submit empties every one
+        # of them together after sending.
         with st.form(key="chat_form", clear_on_submit=True):
-            form_cols = st.columns([0.55, 4.85, 0.6])
-            with form_cols[0]:
+            attached_file = None
+            if st.session_state.get("show_attach", False):
                 attached_file = st.file_uploader(
                     "Attach", type=["jpg", "jpeg", "png", "pdf", "csv", "wav", "mp3", "m4a"],
                     key="chat_attachment", label_visibility="collapsed",
                     accept_multiple_files=False,
                 )
-            with form_cols[1]:
+            form_cols = st.columns([5.4, 0.6])
+            with form_cols[0]:
                 user_text = st.text_input(
                     "", placeholder="Ask AquaPredict AI...", key="chat_input", label_visibility="collapsed",
                 )
-            with form_cols[2]:
+            with form_cols[1]:
                 send_clicked = st.form_submit_button("\u27A4")
 
     st.markdown('</div></div>', unsafe_allow_html=True)
@@ -660,6 +628,7 @@ def render_chat_assistant():
             })
 
         st.session_state.show_suggestions = False
+        st.session_state.show_attach = False
         st.rerun()
 
     # ---- REAL PIPELINE CALL: text -> /predict/extract (extraction -> model -> explanation) ----
