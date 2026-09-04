@@ -23,6 +23,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from features.build_features import build_features
 from explain.llm_explain import generate_explanation, OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT_S
+from knowledge.rag_answer import answer_knowledge_question
 import requests
 
 # ------------------------------------------------------------------
@@ -263,7 +264,8 @@ def _classify_intent(text: str) -> str:
         "Classify this farmer chat message into exactly one word: "
         "\"chat\" (greeting, small talk, question about the app itself), "
         "\"predict_command\" (explicitly asking for the forecast/prediction now, e.g. \"predict\", \"go ahead\", \"calculate it\"), "
-        "or \"pond_data\" (contains or describes pond/fish/farm parameters). "
+        "\"pond_data\" (contains or describes THIS farmer's own pond/fish/farm parameters, e.g. area, count, days, temperature of their pond), "
+        "or \"knowledge_question\" (a general question about Nile tilapia biology or aquaculture practice, not about this farmer's own pond data, e.g. \"why does pH matter for tilapia\", \"what temperature do tilapia prefer\", \"how do tilapia reproduce\"). "
         "Reply with ONLY that one word, nothing else.\n\n"
         f"Message: {text}"
     )
@@ -276,7 +278,7 @@ def _classify_intent(text: str) -> str:
         resp.raise_for_status()
         label = resp.json().get("response", "").strip().lower()
         print(f"[chat] intent classifier raw output: {label!r}")
-        for candidate in ("predict_command", "pond_data", "chat"):
+        for candidate in ("knowledge_question", "predict_command", "pond_data", "chat"):
             if candidate in label:
                 return candidate
     except Exception as e:
@@ -348,6 +350,15 @@ def chat(request: ChatRequest):
             "culture days, temperature, DO, pH) and I'll forecast your harvest. "
             "You can give details across a few messages; just say \"predict\" when you're ready."
         ), "known_fields": known_fields}
+
+    if intent == "knowledge_question":
+        rag_result = answer_knowledge_question(request.farmer_text)
+        return {
+            "status": "knowledge_answer",
+            "reply": rag_result["answer"],
+            "sources": rag_result["sources"],
+            "known_fields": known_fields,
+        }
 
     newly_extracted = _extract_params_from_text(text)
     known_fields.update({k: v for k, v in newly_extracted.items() if v is not None})

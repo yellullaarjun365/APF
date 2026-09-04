@@ -814,6 +814,12 @@ def render_chat_assistant():
                 if result.get("status") == "chat":
                     resp = result.get("reply", "How can I help?")
                     st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
+                elif result.get("status") == "knowledge_answer":
+                    resp = result.get("reply", "")
+                    sources = result.get("sources", [])
+                    if sources:
+                        resp += "\n\n_Source: " + ", ".join(sources) + "_"
+                    st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
                 elif result.get("status") == "need_more":
                     missing = result.get("missing_fields", [])
                     followup = result.get("follow_up_question", "Could you provide more details?")
