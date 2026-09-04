@@ -569,8 +569,8 @@ def _handle_user_message(text: str):
 def render_chat_assistant():
     st.markdown("""
     <div style="padding:8px 0 4px 0;">
-        <div style="font-size:22px;font-weight:700;color:#e2e8f0;">\U0001F4AC Chat Assistant</div>
-        <div style="font-size:14px;color:#94a3b8;margin-top:4px;">Ask anything about your pond or get a production forecast.</div>
+        <div style="font-size:22px;font-weight:700;color:#e2e8f0;">\U0001F4AC AquaLife Assistant</div>
+        <div style="font-size:14px;color:#94a3b8;margin-top:4px;">Your intelligent companion for smarter aquaculture decisions.</div>
     </div>
     <hr style='margin:12px 0 20px 0;border:none;border-top:1px solid #23262f;'>
     """, unsafe_allow_html=True)
