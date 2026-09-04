@@ -255,7 +255,9 @@ def _extract_params_from_text(text: str) -> dict:
         extracted["pond_area_ha"] = round(val, 2)
 
     # Stocking count
-    m = re.search(r'(\d+(?:,\d+)*)\s*(?:fish|fingerlings|stocked|stocking)', text)
+    m = re.search(r'(\d+(?:,\d+)*)\s*(?:tilapia\s+)?(?:fish|fingerlings|stocked|stocking)', text)
+    if not m:
+        m = re.search(r'(\d+(?:,\d+)*)\s*tilapia', text)
     if m:
         extracted["stocking_count"] = int(m.group(1).replace(',', ''))
 
