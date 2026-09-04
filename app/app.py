@@ -29,6 +29,18 @@ API_BASE = os.environ.get("APF_API_URL", "http://localhost:8000")
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+@st.cache_resource
+def _clear_uploads_on_server_start():
+    """Runs exactly once per server process (not per rerun/click, thanks
+    to cache_resource), so a fresh `streamlit run` always starts with an
+    empty uploads folder, but uploads survive normal reruns within the
+    same running session."""
+    for f in UPLOAD_DIR.glob("*"):
+        f.unlink(missing_ok=True)
+    return True
+
+_clear_uploads_on_server_start()
+
 st.set_page_config(
     page_title="AquaPredict AI -- Smarter Aquaculture",
     page_icon="\U0001F41F",
@@ -74,7 +86,26 @@ st.markdown(f"""
 
     {_bg_css}
 
-    .block-container {{ padding: 0 2rem 140px 2rem !important; max-width: 1000px; }}
+    .block-container {{
+        padding: 0 2rem 2rem 2rem !important;
+        max-width: 1000px;
+        min-height: 100vh !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }}
+    /* block-container has exactly ONE direct child in Streamlit's DOM --
+       the page's root div[data-testid="stVerticalBlock"] -- so the flex
+       column above needs to apply *inside* that child, not at
+       block-container's own level (a lone flex item doesn't grow to fill
+       its parent's height unless told to). This is the actual container
+       every top-level st.markdown()/st.container() call becomes a child
+       of, and therefore the real flex parent for pinning the composer. */
+    .block-container > div[data-testid="stVerticalBlock"] {{
+        flex: 1 !important;
+        min-height: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }}
 
     /* Sidebar */
     [data-testid="stSidebar"] {{
@@ -170,18 +201,39 @@ st.markdown(f"""
     .forecast-inline .range {{ font-size: 13px; color: #cbd5e1; margin-top: 4px; }}
     .forecast-inline .factors {{ margin-top: 12px; font-size: 13px; color: #cbd5e1; }}
 
-    /* ---- Fixed bottom input bar (pinned to viewport bottom, ChatGPT-style) ---- */
-    .input-bar-fixed {{
-        position: fixed;
-        bottom: 0; left: 0; right: 0;
-        z-index: 999;
+    /* ---- Bottom input bar, pinned to the bottom of the page via flexbox
+       instead of `position: fixed` -- Streamlit applies a CSS transform
+       to an ancestor container, which resets the containing block for
+       fixed-position children and silently breaks true viewport pinning.
+
+       Previous bug: this used to be a raw HTML <div> opened in one
+       st.markdown() call and closed in a LATER, separate st.markdown()
+       call, with the buttons/form in between. That doesn't work --
+       each st.markdown() call is its own independent HTML fragment as
+       far as the browser's parser is concerned, so the unclosed <div>
+       from the first call was auto-closed at the end of THAT fragment.
+       It never actually wrapped the composer row below it; it just
+       rendered as an empty strip wherever it fell in normal document
+       flow (right under the header, since the chat was empty), and
+       margin-top:auto did nothing because it wasn't a real flex child
+       of anything.
+
+       Fix: the composer is now a genuine st.container(key="composer")
+       in the Python below, which is ONE real DOM node Streamlit tags
+       with the class "st-key-composer" -- so it can actually be
+       selected and pinned. The :has() rule below also covers Streamlit
+       versions that nest that class one level deeper than expected,
+       so this keeps working even if that DOM detail shifts. ---- */
+    div[data-testid="stVerticalBlock"] > div:has(> .st-key-composer),
+    div[data-testid="stVerticalBlock"] > div.st-key-composer {{
+        margin-top: auto !important;
+    }}
+    .st-key-composer {{
         background: linear-gradient(to top, rgba(6,10,16,0.97) 60%, rgba(6,10,16,0));
         padding: 24px 0 18px 0;
-    }}
-    .input-bar-inner {{
-        max-width: 1000px;
-        margin: 0 auto;
-        padding: 0 2rem;
+        position: sticky;
+        bottom: 0;
+        z-index: 10;
     }}
     div[data-testid="stTextInput"] input {{
         background: #1a1d26 !important;
@@ -196,23 +248,104 @@ st.markdown(f"""
     }}
     div[data-testid="stForm"] {{ border: none !important; padding: 0 !important; }}
 
-    /* Compact file-attach control -- shrink Streamlit's default drag-drop
-       box down to something that reads as an "attach" row, not a whole
-       upload panel. */
+    /* Attach control -- compact, full width of its own row (revealed only
+       when the "+" toggle is clicked), styled dark instead of Streamlit's
+       default light drag-drop panel. Trying to squeeze this into a narrow
+       inline column breaks it (the native button keeps its natural width
+       and overlaps neighboring widgets), so it gets its own row instead. */
     div[data-testid="stFileUploader"] {{
-        background: #1a1d26;
-        border: 1px dashed #2a2d3a;
-        border-radius: 14px;
-        padding: 6px 10px;
-        margin-bottom: 8px;
+        background: transparent !important;
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 0 8px 0 !important;
     }}
     div[data-testid="stFileUploaderDropzone"] {{
-        background: transparent !important;
-        padding: 4px !important;
+        background: #1a1d26 !important;
+        border: 1px dashed #2a2d3a !important;
+        border-radius: 12px !important;
+        padding: 6px 10px !important;
         min-height: 0 !important;
     }}
+    div[data-testid="stFileUploaderDropzoneInstructions"] svg {{ width: 20px !important; height: 20px !important; }}
     div[data-testid="stFileUploaderDropzoneInstructions"] span {{ font-size: 12px !important; }}
     div[data-testid="stFileUploaderDropzoneInstructions"] small {{ font-size: 10px !important; }}
+    /* Once a file is picked, Streamlit shows a separate file-list item
+       below the dropzone (name/size chip + remove x) -- restyle that to
+       match the dark theme instead of its default light card. */
+    div[data-testid="stFileUploaderFile"] {{
+        background: #1a1d26 !important;
+        border: 1px solid #2a2d3a !important;
+        border-radius: 10px !important;
+        color: #e2e8f0 !important;
+        margin-top: 8px !important;
+    }}
+    div[data-testid="stFileUploaderFile"] small {{ color: #94a3b8 !important; }}
+
+    /* ---- Forecast page: number inputs, selects, buttons -- match the
+       chat page's dark/teal theme instead of Streamlit's default light
+       controls. ---- */
+    div[data-testid="stNumberInput"] input,
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
+        background: #1a1d26 !important;
+        border: 1px solid #2a2d3a !important;
+        color: #e2e8f0 !important;
+        border-radius: 10px !important;
+    }}
+    div[data-testid="stNumberInput"] button {{
+        background: #23262f !important;
+        border: 1px solid #2a2d3a !important;
+    }}
+    div[data-testid="stSelectbox"] svg {{ fill: #94a3b8 !important; }}
+    div[data-testid="stWidgetLabel"] label p {{
+        color: #94a3b8 !important; font-size: 12px !important; font-weight: 500 !important;
+    }}
+    div[data-testid="stButton"] button {{
+        background: linear-gradient(135deg, #0d9488, #0f766e) !important;
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+    }}
+    div[data-testid="stButton"] button:hover {{
+        box-shadow: 0 2px 12px rgba(13, 148, 136, 0.4) !important;
+    }}
+    .fc-card {{
+        background: rgba(15, 17, 23, 0.82);
+        border: 1px solid #23262f;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 20px;
+    }}
+    .fc-hero {{
+        background: linear-gradient(135deg, rgba(13,148,136,0.16), rgba(15,17,23,0.85));
+        border: 1px solid rgba(13,148,136,0.35);
+        border-radius: 16px;
+        padding: 28px;
+        box-shadow: 0 0 30px rgba(13,148,136,0.08);
+    }}
+    .fc-range-track {{
+        position: relative;
+        height: 6px;
+        background: #23262f;
+        border-radius: 3px;
+        margin: 14px 0 6px 0;
+    }}
+    .fc-range-fill {{
+        position: absolute;
+        top: 0; bottom: 0;
+        background: linear-gradient(90deg, #0d9488, #2dd4bf);
+        border-radius: 3px;
+    }}
+    .fc-range-dot {{
+        position: absolute;
+        top: -4px;
+        width: 14px; height: 14px;
+        background: #ffffff;
+        border: 3px solid #0d9488;
+        border-radius: 50%;
+        transform: translateX(-50%);
+    }}
+
 
     /* Section labels */
     .section-label {{
@@ -240,6 +373,7 @@ def init_state():
         },
         "analyzing": False,
         "show_suggestions": True,
+        "show_attach": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -338,6 +472,39 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+    # ---- Temporary Storage review panel ----
+    st.markdown('<div class="section-label">Temporary Storage</div>', unsafe_allow_html=True)
+    uploads = sorted(UPLOAD_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True) if UPLOAD_DIR.exists() else []
+
+    if not uploads:
+        st.markdown("""
+        <div style="padding:12px;background:rgba(30,33,43,0.8);border-radius:10px;border:1px solid #2a2d3a;font-size:12px;color:#64748b;">
+            No files uploaded yet. Anything you attach in chat will appear here.
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        with st.expander(f"\U0001F4C1 {len(uploads)} file(s)", expanded=False):
+            for f in uploads:
+                size_kb = f.stat().st_size / 1024
+                st.markdown(
+                    f"<div style='font-size:12px;color:#e2e8f0;font-weight:500;margin-top:8px;'>{f.name}</div>"
+                    f"<div style='font-size:11px;color:#64748b;margin-bottom:4px;'>{size_kb:.0f} KB</div>",
+                    unsafe_allow_html=True,
+                )
+                if f.suffix.lower() in [".jpg", ".jpeg", ".png"]:
+                    st.image(str(f), use_container_width=True)
+                elif f.suffix.lower() == ".csv":
+                    try:
+                        st.dataframe(pd.read_csv(f).head(5), use_container_width=True, height=150)
+                    except Exception:
+                        st.caption("(couldn't preview this CSV)")
+                st.markdown("<hr style='margin:8px 0;border-color:#2a2d3a;'>", unsafe_allow_html=True)
+
+            if st.button("\U0001F5D1 Clear all", key="btn_clear_uploads", use_container_width=True):
+                for f in uploads:
+                    f.unlink(missing_ok=True)
+                st.rerun()
+
 # ==================================================================
 # Helper: Format assistant response
 # ==================================================================
@@ -414,83 +581,69 @@ def render_chat_assistant():
         </div>
         """, unsafe_allow_html=True)
 
-    if st.session_state.show_suggestions and len(st.session_state.chat_history) == 0:
-        st.markdown("<div style='font-size:13px;color:#94a3b8;margin-bottom:12px;'>Try asking:</div>", unsafe_allow_html=True)
-        sugg_col1, sugg_col2 = st.columns(2)
-        suggestions = [
-            ("\U0001F4CA", "Forecast my production"),
-            ("\U0001F4A7", "Check water quality"),
-            ("\U0001F37D", "Feeding recommendation"),
-            ("\U0001F4C8", "Growth status"),
-        ]
-        for i, (icon, title) in enumerate(suggestions):
-            col = sugg_col1 if i < 2 else sugg_col2
-            with col:
-                if st.button(f"{icon} {title}", key=f"sugg_{i}", use_container_width=True):
-                    _handle_user_message(title)
-
     # ---- FIXED BOTTOM INPUT BAR ----
-    st.markdown('<div class="input-bar-fixed"><div class="input-bar-inner">', unsafe_allow_html=True)
+    # A real st.container(key=...) -- ONE actual DOM node Streamlit tags
+    # with class "st-key-composer" -- instead of a <div> opened in one
+    # st.markdown() call and closed in a later, separate one (see the CSS
+    # comment above for why that never worked).
+    with st.container(key="composer"):
+        outer = st.columns([0.6, 0.6, 4.8])
 
-    outer = st.columns([0.6, 5.4])
-
-    with outer[0]:
-        if st.button("\U0001F3A4", key="btn_voice", help="Click, then speak (Chrome/Edge only -- Brave blocks this by default)"):
-            st.components.v1.html("""
-            <script>
-            (function() {
-                if (!('webkitSpeechRecognition' in window)) {
-                    alert('Speech recognition not supported in this browser. Use Chrome or Edge.');
-                    return;
-                }
-                const rec = new webkitSpeechRecognition();
-                rec.lang = 'en-US';
-                rec.interimResults = false;
-                rec.maxAlternatives = 1;
-                rec.start();
-                rec.onresult = function(e) {
-                    const text = e.results[0][0].transcript;
-                    const url = new URL(window.parent.location.href);
-                    url.searchParams.set('voice_text', text);
-                    window.parent.location.href = url.toString();
-                };
-                rec.onerror = function(e) {
-                    if (e.error === 'network') {
-                        alert('Speech error: network.\\n\\nThis usually means your browser blocks the speech-recognition service (Brave does this by default for privacy). Try Chrome or Edge instead.');
-                    } else {
-                        alert('Speech error: ' + e.error);
+        with outer[0]:
+            if st.button("\U0001F3A4", key="btn_voice", help="Click, then speak (Chrome/Edge only -- Brave blocks this by default)"):
+                st.components.v1.html("""
+                <script>
+                (function() {
+                    if (!('webkitSpeechRecognition' in window)) {
+                        alert('Speech recognition not supported in this browser. Use Chrome or Edge.');
+                        return;
                     }
-                };
-            })();
-            </script>
-            """, height=0)
+                    const rec = new webkitSpeechRecognition();
+                    rec.lang = 'en-US';
+                    rec.interimResults = false;
+                    rec.maxAlternatives = 1;
+                    rec.start();
+                    rec.onresult = function(e) {
+                        const text = e.results[0][0].transcript;
+                        const url = new URL(window.parent.location.href);
+                        url.searchParams.set('voice_text', text);
+                        window.parent.location.href = url.toString();
+                    };
+                    rec.onerror = function(e) {
+                        if (e.error === 'network') {
+                            alert('Speech error: network.\\n\\nThis usually means your browser blocks the speech-recognition service (Brave does this by default for privacy). Try Chrome or Edge instead.');
+                        } else {
+                            alert('Speech error: ' + e.error);
+                        }
+                    };
+                })();
+                </script>
+                """, height=0)
 
-    with outer[1]:
-        # Attach control -- compact file uploader. Whatever's picked shows
-        # as Streamlit's own filename/size chip (with a built-in remove
-        # "x") right above the text box, exactly like the reference UI,
-        # until the message is actually sent.
-        attached_file = st.file_uploader(
-            "Attach", type=["jpg", "jpeg", "png", "pdf", "csv", "wav", "mp3", "m4a"],
-            key="chat_attachment", label_visibility="collapsed",
-            accept_multiple_files=False,
-        )
+        with outer[1]:
+            if st.button("\u2795", key="btn_attach_toggle", help="Attach a file"):
+                st.session_state.show_attach = not st.session_state.get("show_attach", False)
 
-        # st.form gives us two things we didn't have before: pressing
-        # Enter submits (not just clicking the arrow), and clear_on_submit
-        # empties the text box + attachment automatically after sending --
-        # this is what was making "send" feel broken (it worked, but the
-        # box never cleared and Enter did nothing).
-        with st.form(key="chat_form", clear_on_submit=True):
-            form_cols = st.columns([5.4, 0.6])
-            with form_cols[0]:
-                user_text = st.text_input(
-                    "", placeholder="Ask AquaPredict AI...", key="chat_input", label_visibility="collapsed",
-                )
-            with form_cols[1]:
-                send_clicked = st.form_submit_button("\u27A4")
-
-    st.markdown('</div></div>', unsafe_allow_html=True)
+        with outer[2]:
+            # Attach control (only rendered when toggled on -- its own row,
+            # full width, so nothing overlaps) + text box + send button are
+            # ALL inside the same form, so clear_on_submit empties every one
+            # of them together after sending.
+            with st.form(key="chat_form", clear_on_submit=True):
+                attached_file = None
+                if st.session_state.get("show_attach", False):
+                    attached_file = st.file_uploader(
+                        "Attach", type=["jpg", "jpeg", "png", "pdf", "csv", "wav", "mp3", "m4a"],
+                        key="chat_attachment", label_visibility="collapsed",
+                        accept_multiple_files=False,
+                    )
+                form_cols = st.columns([5.4, 0.6])
+                with form_cols[0]:
+                    user_text = st.text_input(
+                        "", placeholder="Ask AquaPredict AI...", key="chat_input", label_visibility="collapsed",
+                    )
+                with form_cols[1]:
+                    send_clicked = st.form_submit_button("\u27A4")
 
     if send_clicked and ((user_text and user_text.strip()) or attached_file is not None):
         display_text = user_text.strip() if user_text else ""
@@ -528,6 +681,7 @@ def render_chat_assistant():
             })
 
         st.session_state.show_suggestions = False
+        st.session_state.show_attach = False
         st.rerun()
 
     # ---- REAL PIPELINE CALL: text -> /predict/extract (extraction -> model -> explanation) ----
@@ -579,7 +733,8 @@ def render_forecast():
     """, unsafe_allow_html=True)
 
     pred = st.session_state.last_prediction
-    st.markdown("<div style='background:rgba(22,24,31,0.85);border:1px solid #23262f;border-radius:14px;padding:20px;margin-bottom:20px;'>", unsafe_allow_html=True)
+
+    st.markdown('<div class="fc-card">', unsafe_allow_html=True)
     st.markdown("<div style='font-size:16px;font-weight:600;color:#e2e8f0;margin-bottom:16px;'>Forecast Parameters</div>", unsafe_allow_html=True)
 
     c1, c2, c3 = st.columns(3)
@@ -596,7 +751,11 @@ def render_forecast():
         st.selectbox("Season", ["summer", "winter", "monsoon"], index=0, key="fc_season")
         st.selectbox("Intensity", ["extensive", "semi-intensive", "intensive"], index=1, key="fc_intensity")
 
-    if st.button("\U0001F504 Run Forecast", use_container_width=True, key="btn_run_forecast"):
+    st.markdown("<div style='margin-top:8px;'>", unsafe_allow_html=True)
+    run_clicked = st.button("\U0001F504 Run Forecast", use_container_width=True, key="btn_run_forecast")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if run_clicked:
         params = {
             "pond_area_ha": st.session_state.fc_area,
             "stocking_count": int(st.session_state.fc_count),
@@ -617,34 +776,67 @@ def render_forecast():
         if "error" not in result:
             st.session_state.last_prediction = result
             st.session_state.pond_params.update(params)
-            st.success("Forecast updated!")
             st.rerun()
         else:
             st.error("Error: " + str(result["error"]))
     st.markdown("</div>", unsafe_allow_html=True)
 
     if pred:
-        st.markdown("<div style='background:rgba(22,24,31,0.85);border:1px solid #23262f;border-radius:14px;padding:20px;'>", unsafe_allow_html=True)
-        st.markdown(
-            f"<div style='font-size:32px;font-weight:700;color:#0d9488;'>"
-            f"{pred['point_estimate_kg']:.1f} <span style='font-size:14px;font-weight:400;color:#94a3b8;'>kg</span></div>"
-            f"<div style='font-size:11px;color:#94a3b8;margin-bottom:8px;font-weight:500;'>Point Estimate</div>"
-            f"<div style='font-size:14px;color:#e2e8f0;font-weight:600;'>"
-            f"{pred['lower_bound_kg']:.0f} - {pred['upper_bound_kg']:.0f} kg (90% CI)</div>",
-            unsafe_allow_html=True,
-        )
+        pe, lb, ub = pred["point_estimate_kg"], pred["lower_bound_kg"], pred["upper_bound_kg"]
+        dot_pct = 0 if ub == lb else (pe - lb) / (ub - lb) * 100
+        fill_pct = 0 if ub == lb else (pe - lb) / (ub - lb) * 100
+
+        st.markdown('<div class="fc-hero">', unsafe_allow_html=True)
+        hc1, hc2 = st.columns([1.3, 1])
+        with hc1:
+            st.markdown(
+                f"<div style='font-size:12px;color:#5eead4;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;'>Point Estimate</div>"
+                f"<div style='font-size:42px;font-weight:700;color:#ffffff;margin-top:4px;'>"
+                f"{pe:.1f} <span style='font-size:16px;font-weight:400;color:#94a3b8;'>kg</span></div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f"<div class='fc-range-track'>"
+                f"<div class='fc-range-fill' style='left:0%;width:{fill_pct:.1f}%;'></div>"
+                f"<div class='fc-range-dot' style='left:{dot_pct:.1f}%;'></div>"
+                f"</div>"
+                f"<div style='display:flex;justify-content:space-between;font-size:12px;color:#94a3b8;'>"
+                f"<span>{lb:.0f} kg</span><span>{ub:.0f} kg</span></div>"
+                f"<div style='font-size:11px;color:#64748b;margin-top:4px;'>90% confidence interval</div>",
+                unsafe_allow_html=True,
+            )
+        with hc2:
+            factors = pred.get("top_factors", [])
+            if factors:
+                factors_html = "<div style='font-size:12px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;'>Top Factors</div>"
+                for f in factors[:5]:
+                    imp = f.get("importance", 0)
+                    bar_w = min(100, abs(imp) * 400)
+                    factors_html += (
+                        f"<div style='margin-bottom:8px;'>"
+                        f"<div style='font-size:12px;color:#e2e8f0;'>{f['feature'].replace('_', ' ').title()}</div>"
+                        f"<div style='height:4px;background:#23262f;border-radius:2px;margin-top:3px;'>"
+                        f"<div style='height:4px;width:{bar_w:.0f}%;background:linear-gradient(90deg,#0d9488,#2dd4bf);border-radius:2px;'></div>"
+                        f"</div></div>"
+                    )
+                st.markdown(factors_html, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="fc-card" style="margin-top:20px;">', unsafe_allow_html=True)
+        st.markdown("<div style='font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:12px;'>Projected Growth Curve</div>", unsafe_allow_html=True)
         days = np.arange(0, st.session_state.pond_params["culture_days"] + 1, 5)
         t_norm = days / days[-1]
-        biomass = pred["point_estimate_kg"] * (3 * t_norm**2 - 2 * t_norm**3)
-        upper = biomass * (pred["upper_bound_kg"] / pred["point_estimate_kg"])
-        lower = biomass * (pred["lower_bound_kg"] / pred["point_estimate_kg"])
+        biomass = pe * (3 * t_norm**2 - 2 * t_norm**3)
+        upper = biomass * (ub / pe) if pe else biomass
+        lower = biomass * (lb / pe) if pe else biomass
         chart_df = pd.DataFrame({"Day": days, "Forecast": biomass, "Upper": upper, "Lower": lower})
         st.line_chart(
             chart_df.set_index("Day")[["Forecast", "Upper", "Lower"]],
-            color=["#0d9488", "#2a2d3a", "#2a2d3a"],
+            color=["#2dd4bf", "#3a3f4d", "#3a3f4d"],
             use_container_width=True,
         )
         st.markdown("</div>", unsafe_allow_html=True)
+
 
 # ==================================================================
 # Router
