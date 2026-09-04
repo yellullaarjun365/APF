@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from features.build_features import build_features
+from explain.llm_explain import generate_explanation
 
 # ------------------------------------------------------------------
 # Load model artifacts (fail fast at import time if missing)
@@ -155,8 +156,10 @@ def predict(params: PondParameters):
     try:
         result = _predict_from_params(params.model_dump())
 
-        # Simple explanation (placeholder for LLM explanation layer)
-        explanation = _generate_explanation(params.model_dump(), result)
+        # LLM explanation layer (src/explain/llm_explain.py) -- translates
+        # the already-computed numbers into plain language; never touches
+        # the forecast itself. See PROJECT_MANUAL.md §3.
+        explanation = generate_explanation(params.model_dump(), result)
 
         return PredictionResponse(
             status="complete",
@@ -221,7 +224,7 @@ def predict_extract(request: TextExtractRequest):
 
     # Run prediction
     result = _predict_from_params(extracted)
-    explanation = _generate_explanation(extracted, result)
+    explanation = generate_explanation(extracted, result)
 
     return {
         "status": "complete",
@@ -335,32 +338,7 @@ def _generate_followup(missing_fields: list) -> str:
         return f"I need your {names[0]} to make a forecast. Could you provide that?"
     return f"I need a few more details: {', '.join(names)}. Could you provide these?"
 
-def _generate_explanation(params: dict, result: dict) -> str:
-    """Generate a simple explanation of the prediction."""
-    pe = result["point_estimate_kg"]
-    lb = result["lower_bound_kg"]
-    ub = result["upper_bound_kg"]
-    area = params.get("pond_area_ha", 0.5)
-    density = params.get("stocking_count", 3000) / area if area > 0 else 0
 
-    explanation = (
-        f"Based on your pond parameters, I estimate a harvest of **{pe:.0f} kg** "
-        f"({lb:.0f}--{ub:.0f} kg at 90% confidence). "
-        f"With {params.get('stocking_count', 0):,} fish in {area:.1f} ha "
-        f"(density ~{density:,.0f} fish/ha) over {params.get('culture_days', 0)} days, "
-        f"this yield is consistent with {params.get('intensity', 'semi-intensive')} "
-        f"Nile tilapia culture under {params.get('mean_temperature_c', 28)}C conditions."
-    )
-
-    # Add water quality commentary
-    do = params.get("mean_do_mg_l", 7.5)
-    temp = params.get("mean_temperature_c", 28)
-    if do < 4:
-        explanation += " Note: Your DO levels are low -- consider aeration to avoid mortality."
-    elif temp > 32:
-        explanation += " Note: High temperatures increase stress risk -- monitor DO closely."
-
-    return explanation
 
 # ------------------------------------------------------------------
 # Run with: uvicorn src.api.main:app --reload --port 8000
