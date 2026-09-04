@@ -362,6 +362,19 @@ st.markdown(f"""
         text-transform: uppercase; letter-spacing: 0.8px;
         margin: 24px 0 10px 0;
     }}
+
+    /* ---- Kill the rerun dim-flash ----
+       Every button click (Run Forecast, send, attach toggle, etc.) triggers
+       a full Streamlit script rerun. While that rerun is in flight,
+       Streamlit tags the existing DOM with data-stale="true" and fades it
+       to ~60% opacity as a "this content may be outdated" indicator -- that
+       fade is the dimming you're seeing, not a bug in the app code. It's
+       intentional default behavior, but with our own custom-styled UI it
+       just reads as a flicker, so turn it off. */
+    [data-stale="true"] {{
+        opacity: 1 !important;
+        transition: none !important;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
