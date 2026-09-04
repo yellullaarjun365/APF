@@ -229,21 +229,17 @@ st.markdown(f"""
         margin-top: auto !important;
     }}
     .st-key-composer {{
-        /* Was a near-opaque rgba(6,10,16,0.97) -- read as a solid black
-           bar against the whale background. Lowered opacity + a longer,
-           multi-stop fade + a light blur behind it so it reads as a soft
-           vignette merging into the scene, not a hard panel. The text
-           input itself still has its own #1a1d26 background (see the
-           stTextInput rule below) so legibility isn't affected. */
-        background: linear-gradient(
-            to top,
-            rgba(6,10,16,0.55) 0%,
-            rgba(6,10,16,0.30) 50%,
-            rgba(6,10,16,0) 100%
-        );
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        padding: 32px 0 18px 0;
+        /* Previous attempt used a translucent dark gradient + blur to
+           "merge" with the background -- but the bottom of the whale
+           photo is already near-black deep water, so any dark overlay
+           on top of already-near-black pixels still reads as solid
+           black. There's nothing to blend into visually. Real fix: no
+           panel at all -- let the photo show through untouched. The
+           text input and buttons already carry their own #1a1d26 chip
+           backgrounds (see rules below), so they stay legible floating
+           directly over the water instead of sitting on a colored bar. */
+        background: transparent;
+        padding: 24px 0 18px 0;
         position: sticky;
         bottom: 0;
         z-index: 10;
