@@ -449,7 +449,7 @@ if "voice_text" in st.query_params:
 # ==================================================================
 def _api_post(path: str, payload: dict):
     try:
-        r = requests.post(f"{API_BASE}{path}", json=payload, headers={"Content-Type": "application/json"}, timeout=15)
+        r = requests.post(f"{API_BASE}{path}", json=payload, headers={"Content-Type": "application/json"}, timeout=60)
         r.raise_for_status()
         return r.json()
     except Exception as e:
