@@ -22,7 +22,8 @@ from pydantic import BaseModel, Field
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from features.build_features import build_features
-from explain.llm_explain import generate_explanation
+from explain.llm_explain import generate_explanation, OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT_S
+import requests
 
 # ------------------------------------------------------------------
 # Load model artifacts (fail fast at import time if missing)
@@ -96,6 +97,10 @@ class PredictionResponse(BaseModel):
 
 class TextExtractRequest(BaseModel):
     farmer_text: str = Field(..., min_length=3, max_length=2000, description="Free-text pond description")
+
+class ChatRequest(BaseModel):
+    farmer_text: str = Field(..., min_length=1, max_length=2000, description="Free-text chat message")
+    known_fields: dict = Field(default_factory=dict, description="Fields accumulated from earlier turns")
 
 class HealthResponse(BaseModel):
     status: str
@@ -239,6 +244,95 @@ def predict_extract(request: TextExtractRequest):
         "extracted": extracted,
     }
 
+def _classify_intent(text: str) -> str:
+    """Ask the local Ollama model whether this message is small talk,
+    a pond-data description, or an explicit predict command. Falls back
+    to "pond_data" on any Ollama failure so extraction still runs --
+    the safest default when we can't classify."""
+    prompt = (
+        "Classify this farmer chat message into exactly one word: "
+        "\"chat\" (greeting, small talk, question about the app itself), "
+        "\"predict_command\" (explicitly asking for the forecast/prediction now, e.g. \"predict\", \"go ahead\", \"calculate it\"), "
+        "or \"pond_data\" (contains or describes pond/fish/farm parameters). "
+        "Reply with ONLY that one word, nothing else.\n\n"
+        f"Message: {text}"
+    )
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "keep_alive": "30m"},
+            timeout=OLLAMA_TIMEOUT_S,
+        )
+        resp.raise_for_status()
+        label = resp.json().get("response", "").strip().lower()
+        print(f"[chat] intent classifier raw output: {label!r}")
+        for candidate in ("predict_command", "pond_data", "chat"):
+            if candidate in label:
+                return candidate
+    except Exception as e:
+        print(f"[chat] intent classification failed, defaulting to pond_data: {e}")
+    return "pond_data"
+
+
+@app.post("/chat")
+def chat(request: ChatRequest):
+    """Dynamic multi-turn chat endpoint (V1-M5). Classifies intent, merges
+    newly-extracted fields into known_fields server-side, and predicts
+    either when all required fields are known or the farmer explicitly
+    asks for a prediction (whichever comes first)."""
+    text = request.farmer_text.lower()
+    known_fields = dict(request.known_fields or {})
+
+    intent = _classify_intent(text)
+
+    if intent == "chat":
+        return {"status": "chat", "reply": (
+            "I'm AquaPredict AI -- tell me about your pond (area, fish stocked, "
+            "culture days, temperature, DO, pH) and I'll forecast your harvest. "
+            "You can give details across a few messages; just say \"predict\" when you're ready."
+        ), "known_fields": known_fields}
+
+    newly_extracted = _extract_params_from_text(text)
+    known_fields.update({k: v for k, v in newly_extracted.items() if v is not None})
+
+    required = ["pond_area_ha", "stocking_count", "culture_days", "mean_temperature_c"]
+    missing = [f for f in required if f not in known_fields or known_fields[f] is None]
+
+    if missing:
+        return {
+            "status": "need_more",
+            "known_fields": known_fields,
+            "missing_fields": missing,
+            "follow_up_question": _generate_followup(missing),
+        }
+
+    defaults = {
+        "initial_weight_g": 15.0, "season": "summer", "intensity": "semi-intensive",
+        "feed_protein_pct": 30.0, "mean_do_mg_l": 7.5, "min_do_mg_l": 5.0,
+        "mean_ph": 7.5, "min_ph": 6.8, "max_temp_c": 32.0, "min_temp_c": 24.0,
+    }
+    full_params = dict(known_fields)
+    for k, v in defaults.items():
+        if k not in full_params or full_params[k] is None:
+            full_params[k] = v
+
+    result = _predict_from_params(full_params)
+    explanation = generate_explanation(full_params, result)
+
+    return {
+        "status": "predicted",
+        "known_fields": known_fields,
+        "prediction": {
+            "point_estimate_kg": result["point_estimate_kg"],
+            "lower_bound_kg": result["lower_bound_kg"],
+            "upper_bound_kg": result["upper_bound_kg"],
+            "confidence_level": result["confidence_level"],
+            "top_factors": result["top_factors"],
+        },
+        "explanation": explanation,
+    }
+
+
 # ------------------------------------------------------------------
 # Simple rule-based text extractor (placeholder for LLM)
 # ------------------------------------------------------------------
@@ -281,6 +375,8 @@ def _extract_params_from_text(text: str) -> dict:
     m = re.search(r'(\d+(?:\.\d+)?)\s*(?:\u00b0c|degrees?\s*c)\b', text)
     if not m:
         m = re.search(r'(\d+(?:\.\d+)?)\s*c(?![a-z])', text)
+    if not m:
+        m = re.search(r'(?:temperature|temp|water)[^\d]{0,20}(\d+(?:\.\d+)?)\s*degrees?\b', text)
     if m:
         extracted["mean_temperature_c"] = float(m.group(1))
 
