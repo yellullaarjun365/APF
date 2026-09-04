@@ -626,8 +626,8 @@ def format_assistant_response(text: str, prediction: dict = None, extracted: dic
         factors = prediction.get("top_factors", [])
         factors_html = ""
         for f in factors[:4]:
-            imp = f.get("importance", 0)
-            factors_html += f"<li>{f['feature'].replace('_', ' ').title()}: {imp:.3f}</li>"
+            pct = f.get("importance_pct", 0)
+            factors_html += f"<li>{f['feature'].replace('_', ' ').title()}: {pct:.1f}%</li>"
         html += (
             f'<div class="forecast-inline">'
             f'<div class="label">Estimated Production</div>'
@@ -935,8 +935,8 @@ def render_forecast():
             if factors:
                 factors_html = "<div style='font-size:12px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;'>Top Factors</div>"
                 for f in factors[:5]:
-                    imp = f.get("importance", 0)
-                    bar_w = min(100, abs(imp) * 400)
+                    pct = f.get("importance_pct", 0)
+                    bar_w = min(100, pct)
                     factors_html += (
                         f"<div style='margin-bottom:8px;'>"
                         f"<div style='font-size:12px;color:#e2e8f0;'>{f['feature'].replace('_', ' ').title()}</div>"

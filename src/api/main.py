@@ -130,9 +130,18 @@ def _predict_from_params(params: dict) -> dict:
     model_step = MODEL.named_steps["model"]
     feat_names = MODEL.named_steps["pre"].get_feature_names_out()
     importances = model_step.feature_importances_
+    total_importance = importances.sum() or 1.0
     top_idx = np.argsort(importances)[-5:][::-1]
+
+    def _clean_feature_name(name: str) -> str:
+        # Strip ColumnTransformer prefixes like "num__"/"cat__" before display
+        return name.split("__", 1)[-1] if "__" in name else name
+
     top_factors = [
-        {"feature": feat_names[i], "importance": float(importances[i])}
+        {
+            "feature": _clean_feature_name(feat_names[i]),
+            "importance_pct": round(float(importances[i]) / total_importance * 100, 1),
+        }
         for i in top_idx
     ]
 
