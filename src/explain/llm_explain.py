@@ -28,7 +28,7 @@ import requests
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
-OLLAMA_TIMEOUT_S = float(os.environ.get("OLLAMA_TIMEOUT_S", "45"))
+OLLAMA_TIMEOUT_S = float(os.environ.get("OLLAMA_TIMEOUT_S", "120"))
 
 
 def _template_explanation(params: dict, result: dict) -> str:
@@ -95,15 +95,15 @@ def generate_explanation(params: dict, result: dict) -> str:
     try:
         resp = requests.post(
             OLLAMA_URL,
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "keep_alive": "30m"},
             timeout=OLLAMA_TIMEOUT_S,
         )
         resp.raise_for_status()
         text = resp.json().get("response", "").strip()
         if text:
             return text
-    except Exception:
-        pass  # fall through -- a farmer-facing request should never hard-fail here
+    except Exception as e:
+        print(f"[llm_explain] Ollama call failed, using template fallback: {e}")
     return _template_explanation(params, result)
 
 
