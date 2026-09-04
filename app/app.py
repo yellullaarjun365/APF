@@ -29,6 +29,18 @@ API_BASE = os.environ.get("APF_API_URL", "http://localhost:8000")
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+@st.cache_resource
+def _clear_uploads_on_server_start():
+    """Runs exactly once per server process (not per rerun/click, thanks
+    to cache_resource), so a fresh `streamlit run` always starts with an
+    empty uploads folder, but uploads survive normal reruns within the
+    same running session."""
+    for f in UPLOAD_DIR.glob("*"):
+        f.unlink(missing_ok=True)
+    return True
+
+_clear_uploads_on_server_start()
+
 st.set_page_config(
     page_title="AquaPredict AI -- Smarter Aquaculture",
     page_icon="\U0001F41F",
@@ -74,7 +86,13 @@ st.markdown(f"""
 
     {_bg_css}
 
-    .block-container {{ padding: 0 2rem 140px 2rem !important; max-width: 1000px; }}
+    .block-container {{
+        padding: 0 2rem 2rem 2rem !important;
+        max-width: 1000px;
+        display: flex !important;
+        flex-direction: column !important;
+        min-height: 100vh !important;
+    }}
 
     /* Sidebar */
     [data-testid="stSidebar"] {{
@@ -170,18 +188,24 @@ st.markdown(f"""
     .forecast-inline .range {{ font-size: 13px; color: #cbd5e1; margin-top: 4px; }}
     .forecast-inline .factors {{ margin-top: 12px; font-size: 13px; color: #cbd5e1; }}
 
-    /* ---- Fixed bottom input bar (pinned to viewport bottom, ChatGPT-style) ---- */
+    /* ---- Bottom input bar, pinned to the bottom of the page via flexbox
+       instead of `position: fixed` -- Streamlit applies a CSS transform
+       to an ancestor container, which resets the containing block for
+       fixed-position children and silently breaks true viewport pinning.
+       block-container is a flex column (min-height: 100vh) and this gets
+       margin-top: auto, so it's always pushed to the bottom whether the
+       chat is empty or full of messages. ---- */
     .input-bar-fixed {{
-        position: fixed;
-        bottom: 0; left: 0; right: 0;
-        z-index: 999;
+        margin-top: auto;
         background: linear-gradient(to top, rgba(6,10,16,0.97) 60%, rgba(6,10,16,0));
         padding: 24px 0 18px 0;
+        position: sticky;
+        bottom: 0;
     }}
     .input-bar-inner {{
         max-width: 1000px;
         margin: 0 auto;
-        padding: 0 2rem;
+        padding: 0;
     }}
     div[data-testid="stTextInput"] input {{
         background: #1a1d26 !important;
