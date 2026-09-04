@@ -257,7 +257,13 @@ def _extract_params_from_text(text: str) -> dict:
         extracted["stocking_count"] = int(m.group(1).replace(',', ''))
 
     # Culture days
-    m = re.search(r'(\d+)\s*(?:day|days|week|weeks|month|months)', text)
+    m = re.search(r'(\d+)\s*culture\s*days?', text)
+    if not m:
+        m = re.search(r'(\d+)\s*days?\s*(?:of\s*)?culture', text)
+    if not m:
+        m = re.search(r'culture\s*(?:period|duration)?\s*(?:of|is)?\s*(\d+)\s*days?', text)
+    if not m:
+        m = re.search(r'(\d+)\s*(?:day|days|week|weeks|month|months)', text)
     if m:
         val = int(m.group(1))
         if 'week' in text:
@@ -267,7 +273,9 @@ def _extract_params_from_text(text: str) -> dict:
         extracted["culture_days"] = val
 
     # Temperature
-    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:\u00b0c|\u00b0c|c|degrees?)', text)
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:\u00b0c|degrees?\s*c)\b', text)
+    if not m:
+        m = re.search(r'(\d+(?:\.\d+)?)\s*c(?![a-z])', text)
     if m:
         extracted["mean_temperature_c"] = float(m.group(1))
 
