@@ -196,23 +196,61 @@ st.markdown(f"""
     }}
     div[data-testid="stForm"] {{ border: none !important; padding: 0 !important; }}
 
-    /* Compact file-attach control -- shrink Streamlit's default drag-drop
-       box down to something that reads as an "attach" row, not a whole
-       upload panel. */
+    /* Attach control -- collapse Streamlit's default drag-drop panel down
+       to a small square icon button that sits inline with mic/text/send,
+       matching the reference chat bar instead of a separate wide panel. */
     div[data-testid="stFileUploader"] {{
-        background: #1a1d26;
-        border: 1px dashed #2a2d3a;
-        border-radius: 14px;
-        padding: 6px 10px;
-        margin-bottom: 8px;
+        background: transparent !important;
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
     }}
     div[data-testid="stFileUploaderDropzone"] {{
-        background: transparent !important;
-        padding: 4px !important;
-        min-height: 0 !important;
+        background: #1a1d26 !important;
+        border: 1px solid #2a2d3a !important;
+        border-radius: 12px !important;
+        padding: 0 !important;
+        min-height: 46px !important;
+        height: 46px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }}
-    div[data-testid="stFileUploaderDropzoneInstructions"] span {{ font-size: 12px !important; }}
-    div[data-testid="stFileUploaderDropzoneInstructions"] small {{ font-size: 10px !important; }}
+    /* Hide the cloud icon, "Drag and drop files here", and the size/type
+       caption -- keep only the Browse button, and relabel it as an
+       attach icon so the whole control reads as one small square. */
+    div[data-testid="stFileUploaderDropzoneInstructions"] svg,
+    div[data-testid="stFileUploaderDropzoneInstructions"] > div > span,
+    div[data-testid="stFileUploaderDropzoneInstructions"] small {{
+        display: none !important;
+    }}
+    div[data-testid="stFileUploaderDropzoneInstructions"] {{
+        padding: 0 !important; margin: 0 !important;
+    }}
+    div[data-testid="stFileUploaderDropzone"] button {{
+        background: transparent !important;
+        border: none !important;
+        color: #94a3b8 !important;
+        font-size: 0 !important;
+        width: 100%; height: 46px;
+        padding: 0 !important;
+        display: flex; align-items: center; justify-content: center;
+    }}
+    div[data-testid="stFileUploaderDropzone"] button::after {{
+        content: "\\1F4CE";
+        font-size: 18px !important;
+    }}
+    /* Once a file is picked, Streamlit shows a separate file-list item
+       below the dropzone (name/size chip + remove x) -- restyle that to
+       match the dark theme instead of its default light card. */
+    div[data-testid="stFileUploaderFile"] {{
+        background: #1a1d26 !important;
+        border: 1px solid #2a2d3a !important;
+        border-radius: 10px !important;
+        color: #e2e8f0 !important;
+        margin-top: 8px !important;
+    }}
+    div[data-testid="stFileUploaderFile"] small {{ color: #94a3b8 !important; }}
 
     /* ---- Forecast page: number inputs, selects, buttons -- match the
        chat page's dark/teal theme instead of Streamlit's default light
@@ -567,20 +605,21 @@ def render_chat_assistant():
     with outer[1]:
         # Attach control + text box + send button are ALL inside the same
         # form now, so clear_on_submit empties every one of them together
-        # -- previously the uploader sat outside the form, which is why
-        # the attached image kept reappearing after sending.
+        # -- and attach now sits in its own narrow column alongside text
+        # and send, in one row, instead of a full-width panel above them.
         with st.form(key="chat_form", clear_on_submit=True):
-            attached_file = st.file_uploader(
-                "Attach", type=["jpg", "jpeg", "png", "pdf", "csv", "wav", "mp3", "m4a"],
-                key="chat_attachment", label_visibility="collapsed",
-                accept_multiple_files=False,
-            )
-            form_cols = st.columns([5.4, 0.6])
+            form_cols = st.columns([0.55, 4.85, 0.6])
             with form_cols[0]:
+                attached_file = st.file_uploader(
+                    "Attach", type=["jpg", "jpeg", "png", "pdf", "csv", "wav", "mp3", "m4a"],
+                    key="chat_attachment", label_visibility="collapsed",
+                    accept_multiple_files=False,
+                )
+            with form_cols[1]:
                 user_text = st.text_input(
                     "", placeholder="Ask AquaPredict AI...", key="chat_input", label_visibility="collapsed",
                 )
-            with form_cols[1]:
+            with form_cols[2]:
                 send_clicked = st.form_submit_button("\u27A4")
 
     st.markdown('</div></div>', unsafe_allow_html=True)
