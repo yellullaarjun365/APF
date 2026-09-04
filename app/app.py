@@ -229,8 +229,21 @@ st.markdown(f"""
         margin-top: auto !important;
     }}
     .st-key-composer {{
-        background: linear-gradient(to top, rgba(6,10,16,0.97) 60%, rgba(6,10,16,0));
-        padding: 24px 0 18px 0;
+        /* Was a near-opaque rgba(6,10,16,0.97) -- read as a solid black
+           bar against the whale background. Lowered opacity + a longer,
+           multi-stop fade + a light blur behind it so it reads as a soft
+           vignette merging into the scene, not a hard panel. The text
+           input itself still has its own #1a1d26 background (see the
+           stTextInput rule below) so legibility isn't affected. */
+        background: linear-gradient(
+            to top,
+            rgba(6,10,16,0.55) 0%,
+            rgba(6,10,16,0.30) 50%,
+            rgba(6,10,16,0) 100%
+        );
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        padding: 32px 0 18px 0;
         position: sticky;
         bottom: 0;
         z-index: 10;
