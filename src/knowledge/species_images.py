@@ -83,7 +83,7 @@ def get_species_images(species_name: str, max_images: int = 6) -> list[dict]:
                 "action": "query",
                 "generator": "search",
                 "gsrnamespace": 6,
-                "gsrsearch": f"{species_name} filetype:bitmap",
+                "gsrsearch": f"{species_name} animal filetype:bitmap",
                 "gsrlimit": max_images,
                 "prop": "imageinfo",
                 "iiprop": "url|extmetadata",
