@@ -293,14 +293,28 @@ _INTENT_SYSTEM_PROMPT = (
 )
 
 
-async def _classify_intent(text: str) -> str:
+async def _classify_intent(text: str, history: list = None) -> str:
     """Ask the local Ollama model (via the shared async/cached client) --
     small latency win: identical repeated questions during testing or
     real usage hit the disk cache instead of a fresh LLM round-trip, and
     this no longer blocks the event loop the way the old synchronous
-    requests.post call did."""
+    requests.post call did.
+
+    BUG FIX: this used to classify the latest message in total isolation,
+    with no conversation context at all -- so a terse follow-up like
+    "i mean the text information" (which only makes sense as a reply to
+    the previous knowledge-question turn) had nothing to go on and got
+    misclassified as "chat", producing the generic "I'm AquaPredict AI..."
+    intro instead of continuing the actual topic. Now includes recent
+    history in the classification input when available."""
+    user_input = text
+    if history:
+        history_lines = "\n".join(
+            f"{h.get('role', '?')}: {h.get('content', '')}" for h in history[-6:]
+        )
+        user_input = f"Recent conversation:\n{history_lines}\n\nLatest message: {text}"
     try:
-        label = await ollama_chat(_INTENT_SYSTEM_PROMPT, text, temperature=0.0)
+        label = await ollama_chat(_INTENT_SYSTEM_PROMPT, user_input, temperature=0.0)
         label = label.strip().lower()
         print(f"[chat] intent classifier raw output: {label!r}")
         for candidate in ("knowledge_question", "predict_command", "pond_data", "chat"):
@@ -365,7 +379,7 @@ async def chat(request: ChatRequest):
     known_fields = dict(request.known_fields or {})
     history = request.history or []
 
-    intent = await _classify_intent(text)
+    intent = await _classify_intent(text, history)
 
     if intent == "chat":
         return {"status": "chat", "reply": (
@@ -375,7 +389,7 @@ async def chat(request: ChatRequest):
         ), "known_fields": known_fields}
 
     if intent == "knowledge_question":
-        rag_result = await answer_knowledge_question(request.farmer_text)
+        rag_result = await answer_knowledge_question(request.farmer_text, history)
         # images computed once, concurrently with the answer, inside
         # answer_knowledge_question -- no need to call extract_species_name
         # a second time here (that used to happen and doubled latency for
