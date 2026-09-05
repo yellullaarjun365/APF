@@ -9,7 +9,6 @@ instead of crashing.
 import json
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -31,33 +30,6 @@ API_BASE = os.environ.get("APF_API_URL", "http://localhost:8000")
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# ==================================================================
-# Extraction log -- one JSON line per successful text->fields extraction.
-# JSONL (one object per line) rather than a single JSON array, so a new
-# record can be appended without re-reading/re-writing the whole file.
-# Gitignored (see .gitignore) -- this grows indefinitely and is per-machine
-# data, not something that belongs in version control.
-# ==================================================================
-LOG_DIR = PROJECT_ROOT / "data" / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-EXTRACTIONS_LOG = LOG_DIR / "extractions.jsonl"
-
-def _log_extraction(raw_text: str, extracted: dict, prediction: dict, username: str) -> None:
-    """Append one record for a completed extraction. Never raises -- a
-    logging failure should not break the chat for the farmer using it."""
-    record = {
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "username": username.strip() if username and username.strip() else "unknown",
-        "raw_text": raw_text,
-        "extracted": extracted,
-        "prediction": prediction,
-    }
-    try:
-        with open(EXTRACTIONS_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception as e:
-        st.warning(f"Couldn't write extraction log ({e}) -- continuing without it.")
-
 @st.cache_resource
 def _clear_uploads_on_server_start():
     """Runs exactly once per server process (not per rerun/click, thanks
@@ -69,6 +41,30 @@ def _clear_uploads_on_server_start():
     return True
 
 _clear_uploads_on_server_start()
+
+# ==================================================================
+# Long-term memory -- persists known pond facts (known_fields, from the
+# backend's /chat endpoint) to disk, so they survive an app restart, not
+# just a rerun. There's no per-user auth in V1 (see PROJECT_MANUAL.md),
+# so this is a single local file, not scoped per person -- fine for one
+# farmer running their own instance, not a multi-tenant memory store.
+# ==================================================================
+MEMORY_FILE = PROJECT_ROOT / "data" / "session_memory.json"
+
+def _load_memory() -> dict:
+    if MEMORY_FILE.exists():
+        try:
+            return json.loads(MEMORY_FILE.read_text())
+        except Exception:
+            return {}
+    return {}
+
+def _save_memory(known_fields: dict):
+    MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        MEMORY_FILE.write_text(json.dumps(known_fields, indent=2))
+    except Exception:
+        pass  # persistence is best-effort; never break the chat over it
 
 st.set_page_config(
     page_title="AquaPredict AI -- Smarter Aquaculture",
@@ -118,22 +114,9 @@ st.markdown(f"""
     .block-container {{
         padding: 0 2rem 2rem 2rem !important;
         max-width: 1000px;
+        display: flex !important;
+        flex-direction: column !important;
         min-height: 100vh !important;
-        display: flex !important;
-        flex-direction: column !important;
-    }}
-    /* block-container has exactly ONE direct child in Streamlit's DOM --
-       the page's root div[data-testid="stVerticalBlock"] -- so the flex
-       column above needs to apply *inside* that child, not at
-       block-container's own level (a lone flex item doesn't grow to fill
-       its parent's height unless told to). This is the actual container
-       every top-level st.markdown()/st.container() call becomes a child
-       of, and therefore the real flex parent for pinning the composer. */
-    .block-container > div[data-testid="stVerticalBlock"] {{
-        flex: 1 !important;
-        min-height: 0 !important;
-        display: flex !important;
-        flex-direction: column !important;
     }}
 
     /* Sidebar */
@@ -234,44 +217,16 @@ st.markdown(f"""
        instead of `position: fixed` -- Streamlit applies a CSS transform
        to an ancestor container, which resets the containing block for
        fixed-position children and silently breaks true viewport pinning.
-
-       Previous bug: this used to be a raw HTML <div> opened in one
-       st.markdown() call and closed in a LATER, separate st.markdown()
-       call, with the buttons/form in between. That doesn't work --
-       each st.markdown() call is its own independent HTML fragment as
-       far as the browser's parser is concerned, so the unclosed <div>
-       from the first call was auto-closed at the end of THAT fragment.
-       It never actually wrapped the composer row below it; it just
-       rendered as an empty strip wherever it fell in normal document
-       flow (right under the header, since the chat was empty), and
-       margin-top:auto did nothing because it wasn't a real flex child
-       of anything.
-
-       Fix: the composer is now a genuine st.container(key="composer")
-       in the Python below, which is ONE real DOM node Streamlit tags
-       with the class "st-key-composer" -- so it can actually be
-       selected and pinned. The :has() rule below also covers Streamlit
-       versions that nest that class one level deeper than expected,
-       so this keeps working even if that DOM detail shifts. ---- */
-    div[data-testid="stVerticalBlock"] > div:has(> .st-key-composer),
-    div[data-testid="stVerticalBlock"] > div.st-key-composer {{
+       block-container is a flex column (min-height: 100vh); the direct
+       flex child here is st.container(key="chat_composer")'s own real
+       wrapper div (Streamlit generates class "st-key-chat_composer" for
+       it), which is what actually needs margin-top: auto. ---- */
+    div[data-testid="stVerticalBlock"] > div.st-key-chat_composer,
+    .st-key-chat_composer {{
         margin-top: auto !important;
-    }}
-    .st-key-composer {{
-        /* Previous attempt used a translucent dark gradient + blur to
-           "merge" with the background -- but the bottom of the whale
-           photo is already near-black deep water, so any dark overlay
-           on top of already-near-black pixels still reads as solid
-           black. There's nothing to blend into visually. Real fix: no
-           panel at all -- let the photo show through untouched. The
-           text input and buttons already carry their own #1a1d26 chip
-           backgrounds (see rules below), so they stay legible floating
-           directly over the water instead of sitting on a colored bar. */
-        background: transparent;
-        padding: 24px 0 18px 0;
-        position: sticky;
-        bottom: 0;
-        z-index: 10;
+        background: linear-gradient(to top, rgba(6,10,16,0.97) 60%, rgba(6,10,16,0));
+        padding: 24px 2rem 18px 2rem !important;
+        border-radius: 0 !important;
     }}
     div[data-testid="stTextInput"] input {{
         background: #1a1d26 !important;
@@ -391,19 +346,6 @@ st.markdown(f"""
         text-transform: uppercase; letter-spacing: 0.8px;
         margin: 24px 0 10px 0;
     }}
-
-    /* ---- Kill the rerun dim-flash ----
-       Every button click (Run Forecast, send, attach toggle, etc.) triggers
-       a full Streamlit script rerun. While that rerun is in flight,
-       Streamlit tags the existing DOM with data-stale="true" and fades it
-       to ~60% opacity as a "this content may be outdated" indicator -- that
-       fade is the dimming you're seeing, not a bug in the app code. It's
-       intentional default behavior, but with our own custom-styled UI it
-       just reads as a flicker, so turn it off. */
-    [data-stale="true"] {{
-        opacity: 1 !important;
-        transition: none !important;
-    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -422,11 +364,10 @@ def init_state():
             "mean_do_mg_l": 7.5, "min_do_mg_l": 5.0, "mean_ph": 7.5,
             "min_ph": 6.8, "max_temp_c": 32.0, "min_temp_c": 24.0,
         },
-        "chat_known_fields": {},
         "analyzing": False,
         "show_suggestions": True,
         "show_attach": False,
-        "username": "",
+        "known_fields": _load_memory(),
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -450,7 +391,7 @@ if "voice_text" in st.query_params:
 # ==================================================================
 def _api_post(path: str, payload: dict):
     try:
-        r = requests.post(f"{API_BASE}{path}", json=payload, headers={"Content-Type": "application/json"}, timeout=150)
+        r = requests.post(f"{API_BASE}{path}", json=payload, headers={"Content-Type": "application/json"}, timeout=15)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -463,8 +404,23 @@ def _api_predict_text(text: str) -> dict:
     return _api_post("/predict/extract", {"farmer_text": text})
 
 def _api_chat(text: str, known_fields: dict, history: list) -> dict:
-    trimmed = [{"role": h["role"], "content": h["content"]} for h in history[-6:]]
-    return _api_post("/chat", {"farmer_text": text, "known_fields": known_fields, "history": trimmed})
+    """Calls the real intelligent endpoint -- intent classification,
+    RAG knowledge answers, and history-aware follow-ups, all via Ollama.
+    Longer timeout than the other calls: local LLM inference (intent
+    classification + possibly a dynamic follow-up + explanation, each a
+    separate Ollama round-trip) is slower than the plain rule-based path,
+    especially on the first call after Ollama's model isn't warm yet."""
+    try:
+        r = requests.post(
+            f"{API_BASE}/chat",
+            json={"farmer_text": text, "known_fields": known_fields, "history": history},
+            headers={"Content-Type": "application/json"},
+            timeout=60,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"error": str(e)}
 
 def _api_health() -> dict:
     try:
@@ -529,12 +485,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="section-label">Session</div>', unsafe_allow_html=True)
-    st.text_input(
-        "Your Name", key="username",
-        placeholder="e.g. Arjun", help="Tags extraction log entries only -- V1 has no real login/auth.",
-    )
-
     # ---- Temporary Storage review panel ----
     st.markdown('<div class="section-label">Temporary Storage</div>', unsafe_allow_html=True)
     uploads = sorted(UPLOAD_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True) if UPLOAD_DIR.exists() else []
@@ -568,57 +518,31 @@ with st.sidebar:
                     f.unlink(missing_ok=True)
                 st.rerun()
 
+    # ---- Long-term pond memory control ----
+    st.markdown('<div class="section-label">Pond Memory</div>', unsafe_allow_html=True)
+    known = st.session_state.get("known_fields", {})
+    if known:
+        summary = ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in list(known.items())[:4])
+        st.markdown(
+            f"<div style='padding:12px;background:rgba(30,33,43,0.8);border-radius:10px;border:1px solid #2a2d3a;font-size:11px;color:#94a3b8;'>{summary}</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("\U0001F9E0 Forget my pond", key="btn_forget_pond", use_container_width=True):
+            st.session_state.known_fields = {}
+            MEMORY_FILE.unlink(missing_ok=True)
+            st.rerun()
+    else:
+        st.markdown(
+            "<div style='padding:12px;background:rgba(30,33,43,0.8);border-radius:10px;border:1px solid #2a2d3a;font-size:12px;color:#64748b;'>"
+            "Nothing remembered yet -- describe your pond in chat and I'll keep the details across restarts.</div>",
+            unsafe_allow_html=True,
+        )
+
 # ==================================================================
 # Helper: Format assistant response
 # ==================================================================
-# Human-readable labels for the raw field names the extraction API returns.
-# Keep this in sync with whatever fields src/nlp/ extraction can produce --
-# any field not listed here just falls back to a title-cased version of its
-# raw name, so a new field showing up doesn't silently disappear.
-EXTRACTED_FIELD_LABELS = {
-    "pond_area_ha": "Pond Area (ha)",
-    "stocking_count": "Stocking Count",
-    "initial_weight_g": "Initial Weight (g)",
-    "culture_days": "Culture Days",
-    "mean_temperature_c": "Mean Temp (\u00b0C)",
-    "min_temp_c": "Min Temp (\u00b0C)",
-    "max_temp_c": "Max Temp (\u00b0C)",
-    "season": "Season",
-    "intensity": "Intensity",
-    "feed_protein_pct": "Feed Protein (%)",
-    "mean_do_mg_l": "Mean DO (mg/L)",
-    "min_do_mg_l": "Min DO (mg/L)",
-    "mean_ph": "Mean pH",
-    "min_ph": "Min pH",
-}
-
-def format_extracted_fields(extracted: dict) -> str:
-    """Render what the extraction step understood from the farmer's text,
-    so they can see it was parsed correctly BEFORE the forecast -- this is
-    the manual's §3 'field validation' step made visible, not just internal
-    plumbing."""
-    if not extracted:
-        return ""
-    rows = ""
-    for key, val in extracted.items():
-        label = EXTRACTED_FIELD_LABELS.get(key, key.replace("_", " ").title())
-        rows += (
-            f"<div style='display:flex;justify-content:space-between;padding:4px 0;"
-            f"border-bottom:1px solid #23262f;font-size:13px;'>"
-            f"<span style='color:#94a3b8;'>{label}</span>"
-            f"<span style='color:#e2e8f0;font-weight:500;'>{val}</span></div>"
-        )
-    return (
-        f'<div class="forecast-inline" style="margin-bottom:12px;">'
-        f'<div class="label">\U0001F4CB Understood From Your Message</div>'
-        f'<div style="margin-top:8px;">{rows}</div>'
-        f'</div>'
-    )
-
-def format_assistant_response(text: str, prediction: dict = None, extracted: dict = None) -> str:
+def format_assistant_response(text: str, prediction: dict = None) -> str:
     html = f'<div class="msg-assistant-body">{text}</div>'
-    if extracted:
-        html += format_extracted_fields(extracted)
     if prediction:
         pe = prediction.get("point_estimate_kg", 0)
         lb = prediction.get("lower_bound_kg", 0)
@@ -626,19 +550,19 @@ def format_assistant_response(text: str, prediction: dict = None, extracted: dic
         factors = prediction.get("top_factors", [])
         factors_html = ""
         for f in factors[:4]:
-            pct = f.get("importance_pct", 0)
-            factors_html += f"<li>{f['feature'].replace('_', ' ').title()}: {pct:.1f}%</li>"
-        html += (
-            f'<div class="forecast-inline">'
-            f'<div class="label">Estimated Production</div>'
-            f'<div class="value">{pe:.1f} <span style="font-size:14px;font-weight:400;color:#94a3b8;">kg</span></div>'
-            f'<div class="range">Range: {lb:.0f} - {ub:.0f} kg (90% CI)</div>'
-            f'<div class="factors">'
-            f'<strong style="color:#e2e8f0;">Top Factors:</strong>'
-            f'<ul style="margin-top:4px;">{factors_html}</ul>'
-            f'</div>'
-            f'</div>'
-        )
+            imp = f.get("importance_pct", 0)
+            factors_html += f"<li>{f['feature'].replace('_', ' ').title()}: {imp:.1f}%</li>"
+        html += f"""
+        <div class="forecast-inline">
+            <div class="label">Estimated Production</div>
+            <div class="value">{pe:.1f} <span style="font-size:14px;font-weight:400;color:#94a3b8;">kg</span></div>
+            <div class="range">Range: {lb:.0f} - {ub:.0f} kg (90% CI)</div>
+            <div class="factors">
+                <strong style="color:#e2e8f0;">Top Factors:</strong>
+                <ul style="margin-top:4px;">{factors_html}</ul>
+            </div>
+        </div>
+        """
     return html
 
 def _handle_user_message(text: str):
@@ -656,8 +580,8 @@ def _handle_user_message(text: str):
 def render_chat_assistant():
     st.markdown("""
     <div style="padding:8px 0 4px 0;">
-        <div style="font-size:22px;font-weight:700;color:#e2e8f0;">\U0001F4AC AquaLife Assistant</div>
-        <div style="font-size:14px;color:#94a3b8;margin-top:4px;">Your intelligent companion for smarter aquaculture decisions.</div>
+        <div style="font-size:22px;font-weight:700;color:#e2e8f0;">\U0001F4AC Chat Assistant</div>
+        <div style="font-size:14px;color:#94a3b8;margin-top:4px;">Ask anything about your pond or get a production forecast.</div>
     </div>
     <hr style='margin:12px 0 20px 0;border:none;border-top:1px solid #23262f;'>
     """, unsafe_allow_html=True)
@@ -665,28 +589,35 @@ def render_chat_assistant():
     for msg in st.session_state.chat_history:
         if msg["role"] == "assistant":
             pred = msg.get("prediction")
-            extracted = msg.get("extracted")
-            body_html = format_assistant_response(msg["content"], pred, extracted)
-            st.markdown(
-                f'<div class="msg-assistant">'
-                f'<div class="msg-assistant-avatar">\U0001F41F</div>'
-                f'<div>{body_html}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+            body_html = format_assistant_response(msg["content"], pred)
+            st.markdown(f"""
+            <div class="msg-assistant">
+                <div class="msg-assistant-avatar">\U0001F41F</div>
+                <div>{body_html}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            sources = msg.get("sources") or []
+            if sources:
+                src_html = " &bull; ".join(f"<span style='color:#5eead4;'>{s}</span>" for s in sources[:5])
+                st.markdown(
+                    f"<div style='margin:-12px 0 12px 48px;font-size:11px;color:#64748b;'>Sources: {src_html}</div>",
+                    unsafe_allow_html=True,
+                )
             images = msg.get("images") or []
             if images:
-                img_cols = st.columns(len(images))
-                for col, img in zip(img_cols, images):
-                    with col:
-                        st.image(img["url"], caption=img.get("title", ""), use_container_width=True)
+                img_cols = st.columns(min(len(images), 3))
+                for i, img_url in enumerate(images[:3]):
+                    with img_cols[i]:
+                        try:
+                            st.image(img_url, use_container_width=True)
+                        except Exception:
+                            pass
         else:
-            st.markdown(
-                f'<div class="msg-user">'
-                f'<div class="msg-user-body">{msg["content"]}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(f"""
+            <div class="msg-user">
+                <div class="msg-user-body">{msg["content"]}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
     if st.session_state.analyzing:
         st.markdown("""
@@ -699,12 +630,11 @@ def render_chat_assistant():
         </div>
         """, unsafe_allow_html=True)
 
-    # ---- FIXED BOTTOM INPUT BAR ----
-    # A real st.container(key=...) -- ONE actual DOM node Streamlit tags
-    # with class "st-key-composer" -- instead of a <div> opened in one
-    # st.markdown() call and closed in a later, separate one (see the CSS
-    # comment above for why that never worked).
-    with st.container(key="composer"):
+    # ---- BOTTOM INPUT BAR -- real container (not a raw unclosed <div>,
+    # which doesn't actually wrap Streamlit widgets across separate
+    # element calls; each st.* call gets its own isolated container, so
+    # that trick only ever produced an empty floating bar). ----
+    with st.container(key="chat_composer"):
         outer = st.columns([0.6, 0.6, 4.8])
 
         with outer[0]:
@@ -802,7 +732,10 @@ def render_chat_assistant():
         st.session_state.show_attach = False
         st.rerun()
 
-    # ---- REAL PIPELINE CALL: text -> /predict/extract (extraction -> model -> explanation) ----
+    # ---- REAL PIPELINE CALL: text -> /chat (Ollama intent classification,
+    # RAG knowledge answers, dynamic history-aware follow-ups, prediction --
+    # all already built server-side; this is what actually gives the chat
+    # memory across turns, via known_fields + history sent every call). ----
     if st.session_state.analyzing:
         last_user_msg = None
         for msg in reversed(st.session_state.chat_history):
@@ -811,51 +744,54 @@ def render_chat_assistant():
                 break
 
         if last_user_msg:
-            result = _api_chat(last_user_msg, st.session_state.chat_known_fields, st.session_state.chat_history)
-            if "error" in result:
-                resp = "Sorry, I couldn't reach the forecasting engine: " + str(result["error"]) + "\n\n(Is the API running? `uvicorn src.api.main:app --reload --port 8000`)"
+            # Last ~8 turns of {role, content} for the classifier/follow-up
+            # prompts server-side -- plain text only, no attachment/prediction
+            # metadata, since that's not part of the /chat contract.
+            history = [
+                {"role": m["role"], "content": m["content"]}
+                for m in st.session_state.chat_history[-8:]
+            ]
+            result = _api_chat(last_user_msg, st.session_state.known_fields, history)
+            status = result.get("status")
+
+            if status == "chat":
+                resp = result.get("reply", "")
                 st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
+
+            elif status == "knowledge_answer":
+                resp = result.get("reply", "")
+                st.session_state.chat_history.append({
+                    "role": "assistant", "content": resp, "time": "",
+                    "sources": result.get("sources", []),
+                    "images": result.get("images", []),
+                })
+                st.session_state.known_fields = result.get("known_fields", st.session_state.known_fields)
+
+            elif status == "need_more":
+                st.session_state.known_fields = result.get("known_fields", st.session_state.known_fields)
+                _save_memory(st.session_state.known_fields)
+                resp = result.get("follow_up_question", "Could you provide more details?")
+                st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
+
+            elif status == "predicted":
+                st.session_state.known_fields = result.get("known_fields", st.session_state.known_fields)
+                _save_memory(st.session_state.known_fields)
+                pred_data = result.get("prediction", {})
+                st.session_state.last_prediction = pred_data
+                st.session_state.pond_params.update(st.session_state.known_fields)
+                explanation = result.get("explanation", "")
+                resp = explanation if explanation else "Here is your production forecast based on the pond details you provided."
+                st.session_state.chat_history.append({
+                    "role": "assistant", "content": resp, "time": "", "prediction": pred_data,
+                })
+
+            elif "error" in result:
+                resp = "Sorry, I couldn't reach the assistant: " + str(result["error"]) + "\n\n(Is the API running? `uvicorn src.api.main:app --reload --port 8000`, and is Ollama up? `ollama serve`)"
+                st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
+
             else:
-                st.session_state.chat_known_fields = result.get("known_fields", st.session_state.chat_known_fields)
-                if result.get("status") == "chat":
-                    resp = result.get("reply", "How can I help?")
-                    st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
-                elif result.get("status") == "knowledge_answer":
-                    resp = result.get("reply", "")
-                    sources = result.get("sources", [])
-                    if sources:
-                        resp += "\n\n_Source: " + ", ".join(sources) + "_"
-                    st.session_state.chat_history.append({
-                        "role": "assistant", "content": resp, "time": "",
-                        "images": result.get("images", []),
-                    })
-                elif result.get("status") == "need_more":
-                    missing = result.get("missing_fields", [])
-                    followup = result.get("follow_up_question", "Could you provide more details?")
-                    resp = followup + "\n\nMissing: " + ", ".join(missing)
-                    st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
-                elif result.get("status") == "predicted":
-                    pred_data = result.get("prediction", {})
-                    extracted_data = result.get("known_fields", {})
-                    st.session_state.last_prediction = pred_data
-                    st.session_state.pond_params.update(extracted_data)
-                    explanation = result.get("explanation", "")
-                    resp = "Here is your production forecast based on the pond details you provided."
-                    if explanation:
-                        resp += f"\n\n{explanation}"
-                    st.session_state.chat_history.append({
-                        "role": "assistant", "content": resp, "time": "",
-                        "prediction": pred_data, "extracted": extracted_data,
-                    })
-                    _log_extraction(
-                        raw_text=last_user_msg,
-                        extracted=extracted_data,
-                        prediction=pred_data,
-                        username=st.session_state.get("username", ""),
-                    )
-                else:
-                    resp = "I'm not sure how to process that. Try describing your pond with area, stocking count, culture days, temperature, DO, and pH."
-                    st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
+                resp = "I'm not sure how to process that. Try describing your pond, asking a question, or saying \"predict\"."
+                st.session_state.chat_history.append({"role": "assistant", "content": resp, "time": ""})
 
         st.session_state.analyzing = False
         st.rerun()
@@ -950,8 +886,8 @@ def render_forecast():
             if factors:
                 factors_html = "<div style='font-size:12px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;'>Top Factors</div>"
                 for f in factors[:5]:
-                    pct = f.get("importance_pct", 0)
-                    bar_w = min(100, pct)
+                    imp = f.get("importance_pct", 0)
+                    bar_w = min(100, abs(imp))
                     factors_html += (
                         f"<div style='margin-bottom:8px;'>"
                         f"<div style='font-size:12px;color:#e2e8f0;'>{f['feature'].replace('_', ' ').title()}</div>"
