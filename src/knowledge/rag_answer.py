@@ -10,13 +10,24 @@ here now optionally takes `history` and uses it to (a) rewrite the message
 into a standalone question before retrieval/species-detection, (b) tell the
 model what it already said so it adds NEW detail instead of repeating
 itself, and (c) skip re-showing images for a species already shown in the
-last few turns, or whenever the farmer's own words say they just want text.
+last few turns, or whenever the farmer's own words say they just want text
+-- UNLESS the farmer explicitly asks to see images now, which always wins.
 
 Web fallback (V1 fix): when the local knowledge base has nothing
-(`retrieve()` returns zero chunks), fall back to a free Wikipedia lookup
-(src/knowledge/web_fallback.py) instead of just saying "I don't know".
-Local knowledge is always tried first and stays authoritative -- this
-only fires on a genuine local miss.
+(`retrieve()` returns zero chunks), OR the LLM's own answer indicates it
+had nothing new/refuses to go beyond the reference material, fall back to
+a free Wikipedia lookup (src/knowledge/web_fallback.py) instead of just
+returning that as final. Local knowledge is always tried first and stays
+authoritative -- this only fires when the local answer is genuinely a
+dead end.
+
+Refusal-detection fix (V1): the small local model sometimes refuses a
+"tell me more" follow-up outright ("I can't fulfill this request... not
+allowed to add outside information") rather than saying plainly it has
+nothing new -- same underlying situation, different wording. The prompt
+itself has also been softened to discourage that refusal framing in the
+first place, since pattern-matching every possible refusal phrasing is a
+losing game long-term.
 """
 import asyncio
 
@@ -56,6 +67,24 @@ _TEXT_ONLY_PHRASES = (
 def _wants_text_only(raw_question: str) -> bool:
     q = raw_question.lower()
     return any(p in q for p in _TEXT_ONLY_PHRASES)
+
+
+# An explicit ask to see images should always win over the "recently
+# shown" suppression below -- that heuristic exists to avoid pestering
+# with repeat photos on unrelated follow-ups, not to refuse a direct
+# request. Checked against the RAW farmer message, not the standalone-
+# rewritten one, since the rewrite step is free to drop phrasing it
+# doesn't consider essential to the informational content of the question.
+_IMAGE_REQUEST_MARKERS = (
+    "show me", "show the image", "show image", "show pic", "show the pic",
+    "image of", "images of", "picture of", "pictures of", "photo of",
+    "photos of", "see it", "see them", "let me see",
+)
+
+
+def _wants_images_explicitly(raw_question: str) -> bool:
+    q = raw_question.lower()
+    return any(p in q for p in _IMAGE_REQUEST_MARKERS)
 
 
 def _last_assistant_reply(history: list) -> str:
@@ -101,22 +130,24 @@ async def _standalone_query(question: str, history: list) -> str:
         return question
 
 
-async def _get_images_for(question: str, history: list) -> list[dict]:
+async def _get_images_for(question: str, history: list, force: bool = False) -> list[dict]:
+    """force=True (an explicit "show me images" ask) always fetches,
+    bypassing the recently-shown suppression -- see _wants_images_explicitly."""
     species_name = await extract_species_name(question)
     if not species_name:
         return []
-    if _species_recently_shown(species_name, history):
+    if not force and _species_recently_shown(species_name, history):
         return []
     return await asyncio.to_thread(get_species_images, species_name)
 
 
-async def _web_fallback_answer(standalone_question: str, text_only: bool, history: list) -> dict:
+async def _web_fallback_answer(standalone_question: str, text_only: bool, history: list, force_images: bool = False) -> dict:
     """Try free Wikipedia lookup before giving up entirely. Runs the
     Wikipedia HTTP call and the (optional) species-image lookup
     concurrently -- they're independent, no reason to serialize them."""
     images_task = (
         asyncio.sleep(0, result=[]) if text_only
-        else _get_images_for(standalone_question, history)
+        else _get_images_for(standalone_question, history, force=force_images)
     )
     web, images = await asyncio.gather(
         asyncio.to_thread(fetch_wikipedia_summary, standalone_question),
@@ -131,17 +162,25 @@ async def _web_fallback_answer(standalone_question: str, text_only: bool, histor
 
 
 # Phrases the LLM itself uses when local chunks were found but had nothing
-# NEW to add (e.g. answering a "tell me more" follow-up). This is a
-# different situation from retrieve() returning zero chunks -- here the
-# local KB has *something*, just not more than what was already said. A
-# farmer asking "tell me more" wants new information from wherever it can
-# be found, not a technically-correct refusal, so this also triggers the
-# web fallback rather than returning the LLM's "nothing more" answer as-is.
+# NEW to add (e.g. answering a "tell me more" follow-up), OR when it
+# outright refuses to answer beyond the reference material. Both are the
+# same underlying situation from the farmer's point of view -- "I didn't
+# get new information" -- so both trigger the web fallback rather than
+# being returned as a final answer. This list is inherently a losing
+# game long-term (infinite possible refusal phrasings), which is why the
+# prompt itself has also been softened below to discourage refusal
+# framing in the first place -- this list is a safety net, not the
+# primary fix.
 _NO_NEW_INFO_MARKERS = (
     "couldn't find any additional", "could not find any additional",
     "no additional detail", "don't have additional", "do not have additional",
     "nothing further", "nothing more to add", "no further detail",
     "not covered in", "not mentioned in the reference",
+    "can't fulfill", "cannot fulfill", "unable to fulfill",
+    "not allowed to", "i'm not able to", "i am not able to",
+    "unable to provide", "cannot provide", "can't provide",
+    "i don't have enough information", "i do not have enough information",
+    "sorry, i can't", "sorry, i cannot",
 )
 
 
@@ -153,6 +192,7 @@ def _indicates_no_new_info(text: str) -> bool:
 async def answer_knowledge_question(question: str, history: list = None) -> dict:
     history = history or []
     text_only = _wants_text_only(question)
+    force_images = _wants_images_explicitly(question)
     standalone_question = (
         await _standalone_query(question, history)
         if _looks_like_followup(question) else question
@@ -167,7 +207,7 @@ async def answer_knowledge_question(question: str, history: list = None) -> dict
         # on a text miss (e.g. narwhals: honest "don't know" text + real
         # reference photos) -- unless the farmer explicitly said they just
         # want text.
-        return await _web_fallback_answer(standalone_question, text_only, history)
+        return await _web_fallback_answer(standalone_question, text_only, history, force_images=force_images)
 
     context = "\n\n".join(f"[{c['source']}] {c['text']}" for c in chunks)
     sources = sorted(set(c["source"] for c in chunks))
@@ -175,12 +215,19 @@ async def answer_knowledge_question(question: str, history: list = None) -> dict
     already_told = (
         f"\nYou already told the farmer this in your previous reply -- do NOT "
         f"repeat it verbatim. Add NEW details from the reference material "
-        f"instead, or say plainly if there is nothing further to add:\n"
+        f"instead, or say plainly and briefly if there is nothing further to "
+        f"add -- never refuse to answer, just say what's missing:\n"
         f"\"{prev_answer}\"\n"
         if (prev_answer and _looks_like_followup(question)) else ""
     )
 
-    prompt = f"""Answer using ONLY the reference material below. Do not add outside info.
+    # Softened from a hard "Do not add outside info" instruction -- that
+    # framing was making the local model outright refuse follow-ups
+    # ("I can't fulfill this request... not allowed to add outside
+    # information") instead of just saying plainly it has nothing more.
+    # The goal is grounding (no hallucinated facts), not a refusal
+    # posture -- asking for honesty gets that without the refusal.
+    prompt = f"""Answer the question using the reference material below as your source of facts. Do not invent facts that aren't in it -- but never refuse to respond. If the reference material only partially answers the question, share what it does say, then briefly and plainly note what it doesn't cover.
 
 Reference:
 {context}
@@ -192,7 +239,7 @@ Write 2-4 clear, friendly sentences. Plain text only."""
     try:
         text, images = await asyncio.gather(
             ollama_generate(prompt, temperature=0.2),
-            (asyncio.sleep(0, result=[]) if text_only else _get_images_for(standalone_question, history)),
+            (asyncio.sleep(0, result=[]) if text_only else _get_images_for(standalone_question, history, force=force_images)),
         )
     except Exception as e:
         print(f"[rag_answer] Ollama failed: {e}")
@@ -204,13 +251,13 @@ Write 2-4 clear, friendly sentences. Plain text only."""
 
     if text:
         if _indicates_no_new_info(text):
-            # Local chunks existed but had nothing NEW -- try Wikipedia
-            # before accepting that as the final answer. If Wikipedia also
-            # comes up empty, fall back to the LLM's own (accurate) "no new
-            # info" answer rather than the generic NO_MATCH_REPLY, since
-            # unlike a hard retrieval miss, we do have real local sources
-            # to cite here.
-            web_result = await _web_fallback_answer(standalone_question, text_only, history)
+            # Local chunks existed but had nothing NEW, or the model
+            # refused outright -- try Wikipedia before accepting that as
+            # final. If Wikipedia also comes up empty, fall back to the
+            # LLM's own answer rather than the generic NO_MATCH_REPLY,
+            # since unlike a hard retrieval miss, we do have real local
+            # sources to cite here.
+            web_result = await _web_fallback_answer(standalone_question, text_only, history, force_images=force_images)
             if web_result["sources"]:
                 web_result["sources"] = sources + web_result["sources"]
                 return web_result

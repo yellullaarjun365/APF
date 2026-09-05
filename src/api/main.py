@@ -384,8 +384,15 @@ async def _classify_intent(text: str, history: list = None) -> str:
             if candidate in label:
                 return candidate
     except Exception as e:
-        print(f"[chat] intent classification failed, defaulting to pond_data: {e}")
-    return "pond_data"
+        print(f"[chat] intent classification failed: {e}")
+    # No confident label -- either Ollama errored, or its output didn't
+    # match a known candidate. Default to continuing the previous topic
+    # rather than assuming pond_data, which produces a confusing
+    # off-topic reply when the classifier simply hiccuped on an
+    # unrelated question (see patch_intent_fallback_default.py).
+    if _last_assistant_was_knowledge(history):
+        return "knowledge_question"
+    return "chat"
 FIELD_LABELS_AND_WHY = {
     "pond_area_ha": ("pond area (hectares)", "it sets the stocking density and total biomass the pond can realistically support"),
     "stocking_count": ("number of fish stocked", "total fish count is the single biggest driver of total harvest weight"),
