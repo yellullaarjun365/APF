@@ -11,26 +11,27 @@ into a standalone question before retrieval/species-detection, (b) tell the
 model what it already said so it adds NEW detail instead of repeating
 itself, and (c) skip re-showing images for a species already shown in the
 last few turns, or whenever the farmer's own words say they just want text.
+
+Web fallback (V1 fix): when the local knowledge base has nothing
+(`retrieve()` returns zero chunks), fall back to a free Wikipedia lookup
+(src/knowledge/web_fallback.py) instead of just saying "I don't know".
+Local knowledge is always tried first and stays authoritative -- this
+only fires on a genuine local miss.
 """
 import asyncio
 
 from knowledge.retrieve import retrieve
 from knowledge.species_images import extract_species_name, get_species_images
+from knowledge.web_fallback import fetch_wikipedia_summary
 from llm.async_client import ollama_generate
 
 
 NO_MATCH_REPLY = (
-    "I do not have grounded information on that in my current knowledge base. "
-    "Feel free to rephrase, or ask about a species, habitat, or aquaculture practice."
+    "I do not have grounded information on that in my current knowledge base, "
+    "and couldn't find anything on Wikipedia either. Feel free to rephrase, or "
+    "ask about a species, habitat, or aquaculture practice."
 )
 
-# A message only needs conversation context if it's genuinely ambiguous on
-# its own -- short, or built from words that only mean something next to
-# what came before ("more", "that", "it", "mean", ...). A clear question
-# like "tell me about blue whales" should be classified/answered exactly
-# as it was before history-awareness was added -- wrapping it in extra
-# context it doesn't need risks confusing a small local model with input
-# that no longer matches the classifier's plain-question few-shot examples.
 _FOLLOWUP_MARKERS = (
     "more", "again", "it", "that", "this", "those", "these", "mean",
     "also", "further", "instead",
@@ -45,8 +46,6 @@ def _looks_like_followup(text: str) -> bool:
         return True
     return any(w.strip(".,!?") in _FOLLOWUP_MARKERS for w in words)
 
-# Cheap keyword check -- no LLM round-trip needed for this one. Catches the
-# exact complaint that prompted this fix: "i mean the text information".
 _TEXT_ONLY_PHRASES = (
     "just text", "text only", "text information", "the text information",
     "no image", "no images", "without image", "without images",
@@ -67,9 +66,6 @@ def _last_assistant_reply(history: list) -> str:
 
 
 def _species_recently_shown(species_name: str, history: list) -> bool:
-    """True if this species was already discussed in the last few assistant
-    turns -- used to avoid re-fetching/re-displaying the same photos every
-    time the farmer says "tell me more" about the same animal."""
     if not species_name:
         return False
     name_lower = species_name.lower()
@@ -80,13 +76,6 @@ def _species_recently_shown(species_name: str, history: list) -> bool:
 
 
 async def _standalone_query(question: str, history: list) -> str:
-    """Rewrite a possibly-fragmentary follow-up ('tell me more', 'i mean
-    the text information') into a standalone question, using recent
-    conversation history, so retrieval and species-detection have
-    something real to work with. Falls back to the original question
-    unchanged on empty history or any failure -- this step should never
-    make an already-fine query worse. Callers should only invoke this
-    when _looks_like_followup(question) is True -- see answer_knowledge_question."""
     if not history:
         return question
     history_lines = "\n".join(
@@ -113,17 +102,33 @@ async def _standalone_query(question: str, history: list) -> str:
 
 
 async def _get_images_for(question: str, history: list) -> list[dict]:
-    """Species classification (LLM, cached) + image fetch (HTTP), bundled
-    so callers can run this concurrently with answer generation via
-    asyncio.gather. get_species_images is sync/fast (single HTTP GET) so
-    it's dispatched via to_thread rather than blocking the event loop.
-    Skips re-fetching if the same species was already shown recently."""
     species_name = await extract_species_name(question)
     if not species_name:
         return []
     if _species_recently_shown(species_name, history):
         return []
     return await asyncio.to_thread(get_species_images, species_name)
+
+
+async def _web_fallback_answer(standalone_question: str, text_only: bool, history: list) -> dict:
+    """Local knowledge base had nothing -- try free Wikipedia lookup before
+    giving up entirely. Runs the Wikipedia HTTP call and the (optional)
+    species-image lookup concurrently, same reasoning as the main path:
+    they're independent, no reason to serialize them."""
+    images_task = (
+        asyncio.sleep(0, result=[]) if text_only
+        else _get_images_for(standalone_question, history)
+    )
+    web, images = await asyncio.gather(
+        asyncio.to_thread(fetch_wikipedia_summary, standalone_question),
+        images_task,
+    )
+    if web:
+        source = f"Wikipedia: {web['title']}"
+        if web.get("url"):
+            source += f" ({web['url']})"
+        return {"answer": web["extract"], "sources": [source], "images": images}
+    return {"answer": NO_MATCH_REPLY, "sources": [], "images": images}
 
 
 async def answer_knowledge_question(question: str, history: list = None) -> dict:
@@ -138,11 +143,12 @@ async def answer_knowledge_question(question: str, history: list = None) -> dict
     chunks = retrieve(standalone_question, k=4)
 
     if not chunks:
-        # Still worth checking for images even with no text match (e.g.
-        # narwhals: honest "don't know" text + real reference photos) --
-        # unless the farmer explicitly said they just want text.
-        images = [] if text_only else await _get_images_for(standalone_question, history)
-        return {"answer": NO_MATCH_REPLY, "sources": [], "images": images}
+        # Local knowledge base has nothing -- try the free Wikipedia
+        # fallback before giving up. Still worth checking for images even
+        # on a text miss (e.g. narwhals: honest "don't know" text + real
+        # reference photos) -- unless the farmer explicitly said they just
+        # want text.
+        return await _web_fallback_answer(standalone_question, text_only, history)
 
     context = "\n\n".join(f"[{c['source']}] {c['text']}" for c in chunks)
     sources = sorted(set(c["source"] for c in chunks))
@@ -164,13 +170,6 @@ Question: {standalone_question}
 
 Write 2-4 clear, friendly sentences. Plain text only."""
 
-    # Run the main answer generation and the species-image lookup
-    # concurrently -- they're independent LLM/network calls, no reason to
-    # serialize them. This is the main latency win: previously these ran
-    # one after another (and species lookup even ran TWICE, once here and
-    # once again redundantly in main.py's /chat handler -- that duplicate
-    # call has been removed; main.py now uses this function's images
-    # directly instead of recomputing them).
     try:
         text, images = await asyncio.gather(
             ollama_generate(prompt, temperature=0.2),
