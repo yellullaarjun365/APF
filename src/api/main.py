@@ -289,7 +289,19 @@ _INTENT_SYSTEM_PROMPT = (
     "tell me about blue whales -> knowledge_question\n"
     "what dissolved oxygen level is dangerous -> knowledge_question\n"
     "how much do I feed my tilapia -> knowledge_question\n"
-    "how many fish should I stock per hectare -> knowledge_question"
+    "how many fish should I stock per hectare -> knowledge_question\n\n"
+    "Recent conversation:\n"
+    "user: tell me about blue whales\n"
+    "assistant: Blue whales are the largest animals known to have ever existed.\n\n"
+    "Latest message: tell me more -> knowledge_question\n\n"
+    "Recent conversation:\n"
+    "user: tell me about blue whales\n"
+    "assistant: Blue whales are the largest animals known to have ever existed.\n\n"
+    "Latest message: even more -> knowledge_question\n\n"
+    "Recent conversation:\n"
+    "user: my pond is 0.5 hectares\n"
+    "assistant: Got it -- how many fish are stocked?\n\n"
+    "Latest message: 3000 -> pond_data"
 )
 
 
