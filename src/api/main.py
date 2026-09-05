@@ -264,6 +264,8 @@ async def predict_extract(request: TextExtractRequest):
 
 _INTENT_SYSTEM_PROMPT = (
     "You are a strict one-word classifier for a farmer chat assistant. "
+    "Do NOT answer, explain, or engage with the content of the message -- "
+    "your only job is to output the single matching label word. "
     "Reply with ONLY one of these exact words, nothing else, no punctuation, "
     "no explanation: chat, predict_command, pond_data, knowledge_question\n\n"
     "chat = greeting, small talk, or a question about the app itself.\n"
@@ -377,12 +379,27 @@ async def _classify_intent(text: str, history: list = None) -> str:
         )
         user_input = f"Recent conversation:\n{history_lines}\n\nLatest message: {text}"
     try:
-        label = await ollama_chat(_INTENT_SYSTEM_PROMPT, user_input, temperature=0.0)
+        label = await ollama_chat(_INTENT_SYSTEM_PROMPT, user_input, temperature=0.0, max_tokens=6)
         label = label.strip().lower()
         print(f"[chat] intent classifier raw output: {label!r}")
         for candidate in ("knowledge_question", "predict_command", "pond_data", "chat"):
             if candidate in label:
                 return candidate
+        # BUG FIX: llama3.2 frequently ignores the "reply with ONLY one
+        # word" instruction for genuinely interesting questions and answers
+        # them in full instead (observed: asked to classify "tell me about
+        # blue whales", it returned "blue whales are the largest animals
+        # known to have ever existed" -- a real answer, not a label). That
+        # raw text matches none of the four candidates above, so the loop
+        # falls through here. Previously this silently defaulted to "chat"
+        # every time, producing the generic canned intro instead of routing
+        # to the knowledge-question/RAG path. A long unstructured response
+        # that isn't pond data and isn't a predict command is itself strong
+        # evidence the model treated this as a real question worth
+        # answering -- so treat it as knowledge_question rather than chat.
+        if not _looks_like_predict_command(text) and not any(ch.isdigit() for ch in text):
+            print("[chat] classifier answered instead of labeling -- defaulting to knowledge_question")
+            return "knowledge_question"
     except Exception as e:
         print(f"[chat] intent classification failed: {e}")
     # No confident label -- either Ollama errored, or its output didn't
