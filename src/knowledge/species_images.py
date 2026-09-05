@@ -1,31 +1,20 @@
-"""APF -- Species image lookup (V3 extension).
+"""APF -- Species image lookup (V3 extension, async).
 
 If a knowledge_question is actually ASKING TO LEARN ABOUT or SEE a specific
 animal or marine species (e.g. "tell me about blue whales", "what is an
 octopus"), this detects the species name via Ollama and fetches a few real
 images from Wikimedia Commons (free, no API key required). Returns []
 whenever nothing species-like is detected, the question is about a
-practice/management topic that merely mentions a species by name (e.g.
-"why does pH matter for tilapia" -- a water-chemistry question, not a
-request to see the animal), or the lookup fails -- callers must handle an
-empty list gracefully rather than assuming images are always present.
+practice/management topic that merely mentions a species by name, or the
+lookup fails -- callers must handle an empty list gracefully.
 """
-import os
 import requests
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_CHAT_URL = OLLAMA_URL.replace("/api/generate", "/api/chat")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
-OLLAMA_TIMEOUT_S = float(os.environ.get("OLLAMA_TIMEOUT_S", "120"))
+from llm.async_client import ollama_chat
 
 COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php"
 IMAGE_REQUEST_TIMEOUT_S = 10
 
-# System/user role split, not a raw text blob -- llama3.2 is chat/instruct
-# tuned and reliably follows an imperative system instruction + short user
-# turn. A raw prompt phrased like "here's a new feature, decide whether..."
-# gets treated as something to comment on rather than execute; this format
-# does not.
 _SYSTEM_PROMPT = (
     "You are a strict one-word/one-phrase classifier. Reply with ONLY a "
     "species common name, or the single word NONE. Never explain, never "
@@ -54,34 +43,16 @@ _SYSTEM_PROMPT = (
 )
 
 
-def extract_species_name(question: str) -> str | None:
-    """Ask Ollama whether this question is a direct request to learn about
-    or see a specific animal/marine species -- as opposed to a practice,
-    management, or water-chemistry question that merely mentions a species
-    name in passing. Returns the species' common name, or None."""
+async def extract_species_name(question: str) -> str | None:
+    """Ask Ollama (via the shared async/cached client -- NOT a raw
+    synchronous call) whether this question is a direct request to learn
+    about or see a specific animal/marine species. Returns the species'
+    common name, or None. Async + cached: repeated identical questions
+    (common in testing, and in real chat re-asks) cost nothing after the
+    first call."""
     try:
-        resp = requests.post(
-            OLLAMA_CHAT_URL,
-            json={
-                "model": OLLAMA_MODEL,
-                "messages": [
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": question},
-                ],
-                "stream": False,
-                "keep_alive": "30m",
-                "options": {"temperature": 0.0},
-            },
-            timeout=OLLAMA_TIMEOUT_S,
-        )
-        resp.raise_for_status()
-        name = resp.json().get("message", {}).get("content", "").strip()
-        name = name.split("\n")[0].strip().strip('"').strip("'").rstrip(".")
-        print(f"[species_images] question={question!r} -> raw={name!r}")
-        # Reject anything that doesn't look like a short species name --
-        # a real classification is 1-4 words with no sentence punctuation.
-        # This guards against a model that ignores instructions and replies
-        # with a sentence; treating that as "no species" is the safe default.
+        raw = await ollama_chat(_SYSTEM_PROMPT, question, temperature=0.0)
+        name = raw.split("\n")[0].strip().strip('"').strip("'").rstrip(".")
         if (
             not name
             or name.upper() == "NONE"
@@ -98,15 +69,16 @@ def extract_species_name(question: str) -> str | None:
 
 def get_species_images(species_name: str, max_images: int = 3) -> list[dict]:
     """Fetches up to max_images real photos of the given species from
-    Wikimedia Commons. Returns [] on any failure (network, no results,
-    etc.) -- never raises, so callers can safely skip rendering images."""
+    Wikimedia Commons. Returns [] on any failure. Kept synchronous -- it's
+    a single fast HTTP GET, not an LLM call, but is dispatched via
+    asyncio.to_thread by callers that need it alongside async LLM work."""
     try:
         resp = requests.get(
             COMMONS_API_URL,
             params={
                 "action": "query",
                 "generator": "search",
-                "gsrnamespace": 6,  # File namespace
+                "gsrnamespace": 6,
                 "gsrsearch": f"{species_name} filetype:bitmap",
                 "gsrlimit": max_images,
                 "prop": "imageinfo",
@@ -134,15 +106,3 @@ def get_species_images(species_name: str, max_images: int = 3) -> list[dict]:
     except Exception as e:
         print(f"[species_images] image lookup failed for {species_name!r}: {e}")
         return []
-
-
-if __name__ == "__main__":
-    for q in (
-        "tell me about blue whales",
-        "why does pH matter for tilapia",
-        "what is an octopus",
-        "what does a tilapia look like",
-        "how much do I feed my tilapia",
-    ):
-        species = extract_species_name(q)
-        print(f"{q!r} -> {species!r}")
