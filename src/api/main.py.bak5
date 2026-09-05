@@ -285,8 +285,7 @@ _INTENT_SYSTEM_PROMPT = (
     "show me a tilapia -> knowledge_question\n"
     "tell me about blue whales -> knowledge_question\n"
     "what dissolved oxygen level is dangerous -> knowledge_question\n"
-    "how much do I feed my tilapia -> knowledge_question\n"
-    "how many fish should I stock per hectare -> knowledge_question"
+    "how much do I feed my tilapia -> knowledge_question"
 )
 
 

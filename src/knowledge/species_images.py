@@ -67,11 +67,15 @@ async def extract_species_name(question: str) -> str | None:
         return None
 
 
-def get_species_images(species_name: str, max_images: int = 3) -> list[dict]:
+def get_species_images(species_name: str, max_images: int = 6) -> list[dict]:
     """Fetches up to max_images real photos of the given species from
     Wikimedia Commons. Returns [] on any failure. Kept synchronous -- it's
     a single fast HTTP GET, not an LLM call, but is dispatched via
-    asyncio.to_thread by callers that need it alongside async LLM work."""
+    asyncio.to_thread by callers that need it alongside async LLM work.
+    Default raised from 3 to 6 -- 3 was an arbitrary early choice that made
+    every result look artificially identical in count; Wikimedia naturally
+    returns fewer if a species has limited free-use imagery, so this isn't
+    a guarantee of 6, just a higher ceiling."""
     try:
         resp = requests.get(
             COMMONS_API_URL,
