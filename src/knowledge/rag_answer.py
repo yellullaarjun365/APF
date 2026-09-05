@@ -82,9 +82,28 @@ _IMAGE_REQUEST_MARKERS = (
 )
 
 
+_IMAGE_NOUNS = ("image", "images", "picture", "pictures", "photo", "photos", "pic", "pics")
+
+
 def _wants_images_explicitly(raw_question: str) -> bool:
     q = raw_question.lower()
-    return any(p in q for p in _IMAGE_REQUEST_MARKERS)
+    if any(p in q for p in _IMAGE_REQUEST_MARKERS):
+        return True
+    # BUG FIX: the marker-phrase list above only matched specific
+    # prepositional patterns ("images of", "show me", "photo of"). An
+    # equally natural phrasing like "provide me its images" or "give me
+    # the photos" doesn't use any of those exact prepositions and was
+    # silently missed -- force stayed False, so the "recently shown"
+    # suppression in _get_images_for correctly (by its own logic) hid
+    # images for a species already mentioned in the last few turns, even
+    # though the farmer had just explicitly asked to see them. If the
+    # message is short and contains an image-noun at all, that alone is
+    # a reliable enough signal -- a farmer isn't likely to casually
+    # mention "images"/"photos" in an unrelated short message.
+    words = q.split()
+    if len(words) <= 6 and any(w.strip(".,!?'\"") in _IMAGE_NOUNS for w in words):
+        return True
+    return False
 
 
 def _last_assistant_reply(history: list) -> str:
