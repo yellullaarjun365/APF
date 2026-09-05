@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from features.build_features import build_features
 from explain.llm_explain import generate_explanation
 from llm.async_client import OLLAMA_URL, OLLAMA_MODEL, TIMEOUT_S
+OLLAMA_TIMEOUT_S = TIMEOUT_S  # back-compat alias for _classify_intent
 OLLAMA_CHAT_URL = OLLAMA_URL.replace("/api/generate", "/api/chat")
 from knowledge.rag_answer import answer_knowledge_question
 from knowledge.species_images import extract_species_name, get_species_images
