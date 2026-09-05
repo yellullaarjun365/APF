@@ -373,7 +373,17 @@ async def _classify_intent(text: str, history: list = None) -> str:
         return "knowledge_question"
 
     user_input = text
-    if history and _looks_like_followup(text):
+    # BUG FIX: previously only attached recent-conversation context when
+    # _looks_like_followup(text) matched a narrow set of keyword patterns
+    # (e.g. "more", "that", "mean"). A perfectly natural continuation like
+    # "no I want you to provide me [the images]" doesn't match any of
+    # those keywords, so it was sent to the classifier completely alone --
+    # with zero signal that it continues an active knowledge topic -- and
+    # the model reasonably defaulted to "chat". If the last assistant turn
+    # was itself a knowledge answer, that's exactly the situation where
+    # context matters most, regardless of how the follow-up is phrased --
+    # so always attach context then, not just for keyword-matched cases.
+    if history and (_looks_like_followup(text) or _last_assistant_was_knowledge(history)):
         history_lines = "\n".join(
             f"{h.get('role', '?')}: {h.get('content', '')}" for h in history[-6:]
         )
