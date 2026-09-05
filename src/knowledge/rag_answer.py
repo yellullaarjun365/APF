@@ -111,10 +111,9 @@ async def _get_images_for(question: str, history: list) -> list[dict]:
 
 
 async def _web_fallback_answer(standalone_question: str, text_only: bool, history: list) -> dict:
-    """Local knowledge base had nothing -- try free Wikipedia lookup before
-    giving up entirely. Runs the Wikipedia HTTP call and the (optional)
-    species-image lookup concurrently, same reasoning as the main path:
-    they're independent, no reason to serialize them."""
+    """Try free Wikipedia lookup before giving up entirely. Runs the
+    Wikipedia HTTP call and the (optional) species-image lookup
+    concurrently -- they're independent, no reason to serialize them."""
     images_task = (
         asyncio.sleep(0, result=[]) if text_only
         else _get_images_for(standalone_question, history)
@@ -129,6 +128,26 @@ async def _web_fallback_answer(standalone_question: str, text_only: bool, histor
             source += f" ({web['url']})"
         return {"answer": web["extract"], "sources": [source], "images": images}
     return {"answer": NO_MATCH_REPLY, "sources": [], "images": images}
+
+
+# Phrases the LLM itself uses when local chunks were found but had nothing
+# NEW to add (e.g. answering a "tell me more" follow-up). This is a
+# different situation from retrieve() returning zero chunks -- here the
+# local KB has *something*, just not more than what was already said. A
+# farmer asking "tell me more" wants new information from wherever it can
+# be found, not a technically-correct refusal, so this also triggers the
+# web fallback rather than returning the LLM's "nothing more" answer as-is.
+_NO_NEW_INFO_MARKERS = (
+    "couldn't find any additional", "could not find any additional",
+    "no additional detail", "don't have additional", "do not have additional",
+    "nothing further", "nothing more to add", "no further detail",
+    "not covered in", "not mentioned in the reference",
+)
+
+
+def _indicates_no_new_info(text: str) -> bool:
+    t = text.lower()
+    return any(p in t for p in _NO_NEW_INFO_MARKERS)
 
 
 async def answer_knowledge_question(question: str, history: list = None) -> dict:
@@ -184,6 +203,18 @@ Write 2-4 clear, friendly sentences. Plain text only."""
         }
 
     if text:
+        if _indicates_no_new_info(text):
+            # Local chunks existed but had nothing NEW -- try Wikipedia
+            # before accepting that as the final answer. If Wikipedia also
+            # comes up empty, fall back to the LLM's own (accurate) "no new
+            # info" answer rather than the generic NO_MATCH_REPLY, since
+            # unlike a hard retrieval miss, we do have real local sources
+            # to cite here.
+            web_result = await _web_fallback_answer(standalone_question, text_only, history)
+            if web_result["sources"]:
+                web_result["sources"] = sources + web_result["sources"]
+                return web_result
+            return {"answer": text, "sources": sources, "images": images}
         return {"answer": text, "sources": sources, "images": images}
 
     return {
