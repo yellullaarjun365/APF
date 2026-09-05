@@ -305,6 +305,32 @@ _INTENT_SYSTEM_PROMPT = (
 )
 
 
+_PREDICT_MARKERS = ("predict", "go ahead", "calculate", "forecast now")
+
+
+def _looks_like_predict_command(text: str) -> bool:
+    t = text.lower()
+    return any(m in t for m in _PREDICT_MARKERS)
+
+
+def _last_assistant_was_knowledge(history: list) -> bool:
+    """Heuristic, not perfect: True if the most recent assistant turn was
+    a knowledge answer rather than the canned chat greeting or a
+    pond-field request. Used only to bias ambiguous follow-up
+    classification -- never overrides a message with real pond numbers
+    or an explicit predict command (see _classify_intent)."""
+    for h in reversed(history or []):
+        if h.get("role") == "assistant":
+            content = (h.get("content") or "")
+            if content.startswith("I\'m AquaPredict AI"):
+                return False
+            lc = content.lower()
+            if "pond area" in lc or "stocking count" in lc or "culture day" in lc or "i need your" in lc:
+                return False
+            return True
+    return False
+
+
 async def _classify_intent(text: str, history: list = None) -> str:
     """Ask the local Ollama model (via the shared async/cached client) --
     small latency win: identical repeated questions during testing or
@@ -329,6 +355,21 @@ async def _classify_intent(text: str, history: list = None) -> str:
     context-dependent words like "more"/"that"/"mean") -- a clear
     standalone question is classified exactly as it was before any of
     this history-awareness work, unchanged."""
+    # Deterministic short-circuit (added after the wrapped-format few-shot
+    # fix still wasn't reliable for every phrasing of "more"): an
+    # ambiguous follow-up right after a knowledge answer almost certainly
+    # continues that same topic. Don't gamble this on the LLM's one-shot
+    # generalization -- unless the message has real pond numbers or is an
+    # explicit predict command, in which case let normal classification
+    # (or the pond-data extraction path) handle it as before.
+    if (
+        _looks_like_followup(text)
+        and not _looks_like_predict_command(text)
+        and not any(ch.isdigit() for ch in text)
+        and _last_assistant_was_knowledge(history)
+    ):
+        return "knowledge_question"
+
     user_input = text
     if history and _looks_like_followup(text):
         history_lines = "\n".join(
