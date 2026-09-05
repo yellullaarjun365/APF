@@ -24,6 +24,27 @@ NO_MATCH_REPLY = (
     "Feel free to rephrase, or ask about a species, habitat, or aquaculture practice."
 )
 
+# A message only needs conversation context if it's genuinely ambiguous on
+# its own -- short, or built from words that only mean something next to
+# what came before ("more", "that", "it", "mean", ...). A clear question
+# like "tell me about blue whales" should be classified/answered exactly
+# as it was before history-awareness was added -- wrapping it in extra
+# context it doesn't need risks confusing a small local model with input
+# that no longer matches the classifier's plain-question few-shot examples.
+_FOLLOWUP_MARKERS = (
+    "more", "again", "it", "that", "this", "those", "these", "mean",
+    "also", "further", "instead",
+)
+
+
+def _looks_like_followup(text: str) -> bool:
+    words = text.strip().lower().split()
+    if not words:
+        return False
+    if len(words) <= 4:
+        return True
+    return any(w.strip(".,!?") in _FOLLOWUP_MARKERS for w in words)
+
 # Cheap keyword check -- no LLM round-trip needed for this one. Catches the
 # exact complaint that prompted this fix: "i mean the text information".
 _TEXT_ONLY_PHRASES = (
@@ -64,7 +85,8 @@ async def _standalone_query(question: str, history: list) -> str:
     conversation history, so retrieval and species-detection have
     something real to work with. Falls back to the original question
     unchanged on empty history or any failure -- this step should never
-    make an already-fine query worse."""
+    make an already-fine query worse. Callers should only invoke this
+    when _looks_like_followup(question) is True -- see answer_knowledge_question."""
     if not history:
         return question
     history_lines = "\n".join(
@@ -107,7 +129,10 @@ async def _get_images_for(question: str, history: list) -> list[dict]:
 async def answer_knowledge_question(question: str, history: list = None) -> dict:
     history = history or []
     text_only = _wants_text_only(question)
-    standalone_question = await _standalone_query(question, history)
+    standalone_question = (
+        await _standalone_query(question, history)
+        if _looks_like_followup(question) else question
+    )
     prev_answer = _last_assistant_reply(history)
 
     chunks = retrieve(standalone_question, k=4)
@@ -127,7 +152,7 @@ async def answer_knowledge_question(question: str, history: list = None) -> dict
         f"repeat it verbatim. Add NEW details from the reference material "
         f"instead, or say plainly if there is nothing further to add:\n"
         f"\"{prev_answer}\"\n"
-        if prev_answer else ""
+        if (prev_answer and _looks_like_followup(question)) else ""
     )
 
     prompt = f"""Answer using ONLY the reference material below. Do not add outside info.

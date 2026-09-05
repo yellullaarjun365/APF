@@ -26,7 +26,7 @@ from explain.llm_explain import generate_explanation
 from llm.async_client import OLLAMA_URL, OLLAMA_MODEL, TIMEOUT_S, ollama_chat
 OLLAMA_TIMEOUT_S = TIMEOUT_S  # back-compat alias for _classify_intent
 OLLAMA_CHAT_URL = OLLAMA_URL.replace("/api/generate", "/api/chat")
-from knowledge.rag_answer import answer_knowledge_question
+from knowledge.rag_answer import answer_knowledge_question, _looks_like_followup
 from knowledge.species_images import extract_species_name, get_species_images
 import requests
 
@@ -305,10 +305,20 @@ async def _classify_intent(text: str, history: list = None) -> str:
     "i mean the text information" (which only makes sense as a reply to
     the previous knowledge-question turn) had nothing to go on and got
     misclassified as "chat", producing the generic "I'm AquaPredict AI..."
-    intro instead of continuing the actual topic. Now includes recent
-    history in the classification input when available."""
+    intro instead of continuing the actual topic.
+
+    REGRESSION FIX (same day): the first attempt at this wrapped EVERY
+    message in a "Recent conversation: ...\\nLatest message: ..." block,
+    which broke clear questions like "tell me about blue whales" -- that
+    input shape doesn't match the plain one-line examples in the system
+    prompt at all, and the small local model started defaulting to "chat"
+    for messages that used to classify correctly. Now only wraps messages
+    that actually look like vague follow-ups (short, or built from
+    context-dependent words like "more"/"that"/"mean") -- a clear
+    standalone question is classified exactly as it was before any of
+    this history-awareness work, unchanged."""
     user_input = text
-    if history:
+    if history and _looks_like_followup(text):
         history_lines = "\n".join(
             f"{h.get('role', '?')}: {h.get('content', '')}" for h in history[-6:]
         )
